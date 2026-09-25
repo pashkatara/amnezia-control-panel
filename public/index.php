@@ -294,7 +294,7 @@ Router::get('/dashboard', function () {
     $stmt = $pdo->query("
         SELECT COUNT(*) as cnt FROM vpn_clients 
         WHERE last_handshake IS NOT NULL 
-        AND last_handshake > DATE_SUB(NOW(), INTERVAL 5 MINUTE)
+        AND last_handshake > DATE_SUB(NOW(), INTERVAL 75 SECOND)
         AND status = 'active'
     ");
     $recentHandshakeCount = (int) $stmt->fetchColumn();
@@ -1355,6 +1355,57 @@ Router::get('/clients/{id}/download', function ($params) {
         header('Content-Disposition: attachment; filename="' . $filename . '"');
         header('Content-Length: ' . strlen($config));
         echo $config;
+    } catch (Exception $e) {
+        http_response_code(404);
+        echo 'Client not found';
+    }
+});
+
+// Download Amnezia VPN config (.vpn file for Amnezia mobile & desktop app)
+Router::get('/clients/{id}/download-vpn', function ($params) {
+    requireAuth();
+
+    while (ob_get_level()) {
+        ob_end_clean();
+    }
+
+    $clientId = (int) $params['id'];
+
+    try {
+        $client = new VpnClient($clientId);
+        $clientData = $client->getData();
+
+        $user = Auth::user();
+        if ($clientData['user_id'] != $user['id'] && !Auth::isAdmin()) {
+            http_response_code(403);
+            echo 'Forbidden';
+            return;
+        }
+
+        try {
+            $client->regenerateConfigFromServer(true);
+        } catch (Throwable $e) {
+            error_log('Failed to regenerate client config: ' . $e->getMessage());
+        }
+
+        $config = $client->getConfig();
+        $slug = (string) ($clientData['protocol_slug'] ?? 'awg31');
+
+        $envelope = QrUtil::buildOldEnvelopeFromConf($config, $slug);
+        $vpnJson = json_encode($envelope, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+        $baseName = !empty($clientData['name']) ? $clientData['name'] : 'amnezia_config';
+        $safeName = preg_replace('/[^a-zA-Z0-9_\-\p{Cyrillic}]/u', '_', $baseName);
+        if (empty($safeName)) {
+            $safeName = 'amnezia_config';
+        }
+
+        $filename = $safeName . '.vpn';
+
+        header('Content-Type: application/json; charset=utf-8');
+        header('Content-Disposition: attachment; filename="' . $filename . '"');
+        header('Content-Length: ' . strlen($vpnJson));
+        echo $vpnJson;
     } catch (Exception $e) {
         http_response_code(404);
         echo 'Client not found';
@@ -2697,8 +2748,10 @@ Router::get('/api/servers/{id}/clients', function ($params) {
                 'status' => $clientData['status'],
                 'created_at' => $clientData['created_at'],
                 'stats' => $stats,
-                'bytes_sent' => $clientData['bytes_sent'],
-                'bytes_received' => $clientData['bytes_received'],
+                'bytes_sent' => (int) ($clientData['bytes_sent'] ?? 0),
+                'bytes_received' => (int) ($clientData['bytes_received'] ?? 0),
+                'speed_up' => (int) ($clientData['speed_up'] ?? 0),
+                'speed_down' => (int) ($clientData['speed_down'] ?? 0),
                 'last_handshake' => $clientData['last_handshake'],
             ];
         }

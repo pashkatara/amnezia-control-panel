@@ -460,7 +460,7 @@ class ServerMonitoring
         if ($previous) {
             $timeDiff = time() - strtotime($previous['collected_at']);
             // Check for reasonable time diff to avoid division by zero or huge spikes
-            if ($timeDiff > 0 && $timeDiff < 300) {
+            if ($timeDiff > 0 && $timeDiff < 75) {
                 // Calculate speed in Kbps
                 $bytesDiffSent = (int) $bytesSent - (int) $previous['bytes_sent'];
                 $bytesDiffReceived = (int) $bytesReceived - (int) $previous['bytes_received'];
@@ -1270,7 +1270,7 @@ class ServerMonitoring
             WHERE vc.server_id = ? 
               AND vc.status = 'active'
               AND vc.last_handshake IS NOT NULL 
-              AND vc.last_handshake >= DATE_SUB(NOW(), INTERVAL 300 SECOND)
+              AND vc.last_handshake >= DATE_SUB(NOW(), INTERVAL 75 SECOND)
               AND (p.slug IS NULL OR p.slug NOT LIKE '%xray%')
         ");
         $stmt->execute([$serverData['id']]);

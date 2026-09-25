@@ -13,6 +13,8 @@ class SettingsController {
         $stats = $this->getTranslationStats();
         $users = $this->getAllUsers();
         $apiKey = $this->getApiKey('openrouter');
+        $currentUser = Auth::user();
+        $servers = $currentUser ? VpnServer::listByUser($currentUser['id']) : [];
 
         // LDAP data for embedded tab
         $stmt = $this->pdo->query("SELECT * FROM ldap_configs WHERE id = 1");
@@ -43,6 +45,7 @@ class SettingsController {
         $definitionPretty = json_encode([], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
         $data = [
+            'servers' => $servers,
             'translation_stats' => $stats,
             'users' => $users,
             'openrouter_key' => $apiKey,

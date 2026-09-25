@@ -280,7 +280,7 @@ class QrUtil
                 $allowedIps = array_map('trim', preg_split('/[,\s]+/', $v));
             } elseif (stripos($line, 'PersistentKeepalive') === 0 && strpos($line, '=') !== false) {
                 [, $v] = array_map('trim', explode('=', $line, 2));
-                $keepAlive = $v;
+                $keepAlive = is_numeric($v) ? (int)$v : 25;
             }
         }
 
@@ -290,7 +290,7 @@ class QrUtil
         if (!$mtu) {
             $mtu = 1280;
         }
-        if (!$keepAlive) {
+        if (!$keepAlive || !is_numeric($keepAlive)) {
             $keepAlive = 25;
         }
         $dns1 = $dns[0] ?? '1.1.1.1';
@@ -366,7 +366,7 @@ class QrUtil
             'config' => $conf,
             'hostName' => (string) ($endpointHost ?? ''),
             'mtu' => (string) $mtu,
-            'persistent_keep_alive' => (string) $keepAlive,
+            'persistent_keep_alive' => (string) (is_numeric($keepAlive) ? $keepAlive : 25),
             'port' => $endpointPort,
             'psk_key' => (string) ($psk ?? ''),
             'server_pub_key' => (string) ($pubKeyServer ?? ''),
@@ -406,7 +406,7 @@ class QrUtil
         return $vars;
     }
 
-    private static function buildOldEnvelopeFromConf(string $conf, string $protocolSlug = ''): array
+    public static function buildOldEnvelopeFromConf(string $conf, string $protocolSlug = ''): array
     {
         $endpointHost = null;
         $endpointPort = null;
@@ -585,10 +585,10 @@ class QrUtil
                         array_filter(array_map(static fn($v) => $v === null ? null : (string) $v, $params), static fn($v) => $v !== null),
                         ['protocol_version' => '3.1']
                     ) : [])),
-                    'container' => $protocolSlug === 'awg2' ? 'amnezia-awg2' : 'amnezia-awg',
+                    'container' => $protocolSlug === 'awg2' ? 'amnezia-awg2' : ($protocolSlug === 'awg31' ? 'amnezia-awg31' : 'amnezia-awg'),
                 ],
             ],
-            'defaultContainer' => $protocolSlug === 'awg2' ? 'amnezia-awg2' : 'amnezia-awg',
+            'defaultContainer' => $protocolSlug === 'awg2' ? 'amnezia-awg2' : ($protocolSlug === 'awg31' ? 'amnezia-awg31' : 'amnezia-awg'),
             'description' => $serverDesc,
             'dns1' => $dns1,
             'dns2' => $dns2,

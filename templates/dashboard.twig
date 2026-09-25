@@ -69,14 +69,14 @@
                 <div class="space-y-1">
                     <p class="text-xs font-semibold uppercase tracking-wider text-slate-400">{{ t('dashboard.online_now') }}</p>
                     <div class="flex items-baseline gap-2.5">
-                        <p class="text-3xl font-extrabold text-slate-900">{{ online_count|default(0) }}</p>
+                        <p class="text-3xl font-extrabold text-slate-900" id="dashOnlineCount">{{ online_count|default(0) }}</p>
                         {% if (online_count|default(0)) > 0 %}
-                        <span class="flex h-2.5 w-2.5 relative" title="Есть активные подключения">
+                        <span class="flex h-2.5 w-2.5 relative" id="dashOnlinePulse">
                             <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                             <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
                         </span>
                         {% else %}
-                        <span class="inline-flex rounded-full h-2.5 w-2.5 bg-slate-300" title="Нет активных подключений"></span>
+                        <span class="inline-flex rounded-full h-2.5 w-2.5 bg-slate-300" id="dashOnlinePulse"></span>
                         {% endif %}
                     </div>
                 </div>
@@ -97,22 +97,197 @@
         </div>
     </div>
 
-    <!-- Recent Servers Section -->
+    <!-- MAIN SECTION: All Clients Table -->
+    <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
+        <div class="px-6 py-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-slate-50/50">
+            <div class="flex items-center gap-2.5">
+                <div class="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center text-sm shadow-inner">
+                    <i class="fas fa-users"></i>
+                </div>
+                <div>
+                    <h2 class="text-base font-bold text-slate-900 leading-tight">
+                        Клиенты VPN
+                        <span class="text-xs font-semibold px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded-full ml-1.5">{{ clients|length }}</span>
+                    </h2>
+                    <p class="text-[11px] text-slate-400">Управление подключениями со всех серверов в реальном времени</p>
+                </div>
+            </div>
+        </div>
+
+        {% if clients|length > 0 %}
+        <div class="w-full">
+            <table class="w-full divide-y divide-slate-100 text-left">
+                <thead class="bg-slate-50/70">
+                    <tr class="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                        <th class="px-4 py-3">Клиент</th>
+                        <th class="px-3 py-3">Сервер</th>
+                        <th class="px-3 py-3">Статус</th>
+                        <th class="px-3 py-3">Срок</th>
+                        <th class="px-3 py-3">Трафик</th>
+                        <th class="px-3 py-3">Скорость</th>
+                        <th class="px-4 py-3 text-right">Управление</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100 bg-white">
+                    {% for client in clients %}
+                    <tr class="hover:bg-slate-50/80 transition-colors" data-client-id="{{ client.id }}" data-server-id="{{ client.server_id }}">
+                        <!-- Client Column -->
+                        <td class="px-4 py-3 whitespace-nowrap">
+                            <div class="flex items-center">
+                                <div class="relative mr-3">
+                                    <a href="/clients/{{ client.id }}" class="w-9 h-9 rounded-xl bg-indigo-50/70 hover:bg-indigo-100 text-indigo-700 flex items-center justify-center text-sm font-bold transition shadow-sm border border-indigo-100" title="Перейти к клиенту">
+                                        <i class="fas fa-user-shield"></i>
+                                    </a>
+                                    {% set is_online_by_handshake = client.last_handshake and (("now"|date('U') - client.last_handshake|date('U')) < 75) %}
+                                    <span class="online-pulse-dot absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-emerald-500 border-2 border-white ring-1 ring-emerald-400 animate-pulse {% if not is_online_by_handshake %}hidden{% endif %}" title="В сети"></span>
+                                </div>
+                                <div class="flex flex-col">
+                                    <a href="/clients/{{ client.id }}" class="text-sm font-bold text-slate-900 hover:text-indigo-600 transition">
+                                        {{ client.name }}
+                                    </a>
+                                    <div class="flex items-center gap-1.5 mt-0.5">
+                                        <span class="font-mono text-[11px] text-slate-500 bg-slate-50 px-1.5 py-0.2 rounded border border-slate-200/60">{{ client.client_ip }}</span>
+                                        {% if client.protocol_name %}
+                                            <span class="px-1.5 py-0.2 text-[9px] font-bold bg-indigo-50 text-indigo-700 rounded border border-indigo-200/60">{{ client.protocol_name }}</span>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                            </div>
+                        </td>
+
+                        <!-- Server Column -->
+                        <td class="px-3 py-3 whitespace-nowrap">
+                            <a href="/servers/{{ client.server_id }}" class="inline-flex items-center gap-1.5 px-2.5 py-1 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 transition">
+                                <i class="fas fa-server text-indigo-500 text-[10px]"></i>
+                                <span>{{ client.server_name|default('Сервер ' ~ client.server_id) }}</span>
+                            </a>
+                        </td>
+
+                        <!-- Status Column -->
+                        <td class="px-3 py-3 whitespace-nowrap client-status-cell">
+                            <div class="status-pill-container">
+                                {% if is_online_by_handshake %}
+                                    <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-sm">
+                                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                                        В сети
+                                    </span>
+                                {% elseif client.status == 'active' %}
+                                    <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+                                        <span class="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
+                                        Не в сети
+                                    </span>
+                                {% else %}
+                                    <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200">
+                                        <span class="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
+                                        Отключен
+                                    </span>
+                                {% endif %}
+                            </div>
+                        </td>
+
+                        <!-- Expiration Column -->
+                        <td class="px-3 py-3 whitespace-nowrap text-xs">
+                            {% if client.expires_at %}
+                                {% set expires_ts = client.expires_at|date('U') %}
+                                {% set now_ts = "now"|date('U') %}
+                                {% set diff_days = ((expires_ts - now_ts) / 86400)|round %}
+                                
+                                {% if diff_days < 0 %}
+                                    <span class="inline-flex items-center gap-1 px-2.5 py-0.5 bg-rose-50 text-rose-700 border border-rose-200 rounded-lg font-bold text-xs">
+                                        <i class="fas fa-exclamation-circle text-[10px]"></i> Истек
+                                    </span>
+                                {% elseif diff_days <= 7 %}
+                                    <span class="inline-flex items-center gap-1 px-2.5 py-0.5 bg-amber-50 text-amber-800 border border-amber-200 rounded-lg font-bold text-xs">
+                                        <i class="fas fa-clock text-[10px]"></i> {{ diff_days }} дн.
+                                    </span>
+                                {% else %}
+                                    <span class="font-bold text-slate-800 text-xs">Осталось {{ diff_days }} дн.</span>
+                                {% endif %}
+                            {% else %}
+                                <span class="inline-flex items-center gap-1 px-2.5 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg font-bold text-xs">
+                                    <i class="fas fa-infinity text-xs"></i> Бессрочно
+                                </span>
+                            {% endif %}
+                        </td>
+
+                        <!-- Traffic Column -->
+                        <td class="px-3 py-3 whitespace-nowrap">
+                            <div class="flex items-center gap-1.5">
+                                <span class="inline-flex items-center gap-1 font-mono text-xs font-bold text-sky-700 bg-sky-50 px-2 py-0.5 rounded-lg border border-sky-200/60" title="Получено">
+                                    <i class="fas fa-arrow-down text-[9px] text-sky-500"></i><span class="traffic-rec-val">{{ (client.bytes_received|default(0) / 1048576)|number_format(1) }}</span>M
+                                </span>
+                                <span class="inline-flex items-center gap-1 font-mono text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-200/60" title="Отправлено">
+                                    <i class="fas fa-arrow-up text-[9px] text-emerald-500"></i><span class="traffic-sent-val">{{ (client.bytes_sent|default(0) / 1048576)|number_format(1) }}</span>M
+                                </span>
+                            </div>
+                        </td>
+
+                        <!-- Speed Column -->
+                        <td class="px-3 py-3 whitespace-nowrap">
+                            <div class="inline-flex items-center gap-1.5 bg-slate-50 border border-slate-200/80 px-2.5 py-1 rounded-xl shadow-inner font-mono text-xs font-bold whitespace-nowrap">
+                                <span class="text-sky-600 flex items-center gap-0.5">
+                                    <i class="fas fa-arrow-down text-[9px]"></i><span class="speed-down-val">{{ ((client.speed_down|default(0) * 8) / 1000000)|number_format(1) }}</span>
+                                </span>
+                                <span class="text-slate-300">/</span>
+                                <span class="text-emerald-600 flex items-center gap-0.5">
+                                    <i class="fas fa-arrow-up text-[9px]"></i><span class="speed-up-val">{{ ((client.speed_up|default(0) * 8) / 1000000)|number_format(1) }}</span>
+                                </span>
+                                <span class="text-[9px] font-normal text-slate-400">Мб/с</span>
+                            </div>
+                        </td>
+
+                        <!-- Actions Column -->
+                        <td class="px-4 py-3 whitespace-nowrap text-right">
+                            <div class="inline-flex items-center gap-1.5 justify-end">
+                                {% if client.status == 'active' %}
+                                    <form method="POST" action="/clients/{{ client.id }}/revoke" class="inline">
+                                        <button type="button" class="w-8 h-8 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 flex items-center justify-center transition shadow-sm" title="Приостановить доступ" onclick="confirmAction(this, 'Приостановить доступ клиенту {{ client.name }}?')">
+                                            <i class="fas fa-pause text-xs"></i>
+                                        </button>
+                                    </form>
+                                {% else %}
+                                    <form method="POST" action="/clients/{{ client.id }}/restore" class="inline">
+                                        <button type="submit" class="w-8 h-8 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 flex items-center justify-center transition shadow-sm" title="Возобновить доступ">
+                                            <i class="fas fa-play text-xs"></i>
+                                        </button>
+                                    </form>
+                                {% endif %}
+                                <form method="POST" action="/clients/{{ client.id }}/delete" class="inline">
+                                    <button type="button" class="w-8 h-8 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 flex items-center justify-center transition shadow-sm" title="Удалить клиента навсегда" onclick="confirmAction(this, 'Удалить клиента {{ client.name }} навсегда?')">
+                                        <i class="fas fa-trash-alt text-xs"></i>
+                                    </button>
+                                </form>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="p-10 text-center text-slate-400 text-xs">
+            <i class="fas fa-users text-2xl mb-2 block text-slate-300"></i>
+            Клиенты еще не созданы. Добавьте сервер и создайте первого клиента!
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- SECOND SECTION: Servers List -->
     {% if servers|length > 0 %}
     <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
         <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
             <div class="flex items-center gap-2.5">
                 <i class="fas fa-server text-indigo-600 text-sm"></i>
-                <h2 class="text-base font-bold text-slate-900">{{ t('dashboard.recent_servers') }}</h2>
+                <h2 class="text-base font-bold text-slate-900">Подключенные серверы</h2>
             </div>
             <a href="/servers" class="text-xs font-semibold text-indigo-600 hover:text-indigo-700">
                 Все серверы ({{ servers|length }}) &rarr;
             </a>
         </div>
-        <div class="overflow-x-auto">
+        <div class="w-full">
             <table class="min-w-full divide-y divide-slate-100">
-                <thead>
-                    <tr class="bg-slate-50/70 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                <thead class="bg-slate-50/70 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                    <tr>
                         <th class="px-6 py-3.5">{{ t('servers.name') }}</th>
                         <th class="px-6 py-3.5">{{ t('servers.host') }}</th>
                         <th class="px-6 py-3.5">{{ t('servers.status') }}</th>
@@ -166,18 +341,72 @@
             </table>
         </div>
     </div>
-    {% else %}
-    <div class="bg-white rounded-2xl border border-slate-200/80 p-12 text-center shadow-sm max-w-xl mx-auto">
-        <div class="w-16 h-16 rounded-2xl bg-indigo-50 text-indigo-500 border border-indigo-100 flex items-center justify-center text-3xl mx-auto mb-4">
-            <i class="fas fa-server"></i>
-        </div>
-        <h3 class="text-lg font-bold text-slate-900 mb-1">{{ t('dashboard.no_servers') }}</h3>
-        <p class="text-sm text-slate-500 mb-6">{{ t('dashboard.get_started') }}</p>
-        <a href="/servers/create" class="inline-flex items-center justify-center px-5 py-2.5 rounded-xl shadow-lg shadow-indigo-500/20 text-sm font-semibold text-white brand-gradient hover:opacity-95 transition">
-            <i class="fas fa-plus mr-2"></i>
-            {{ t('dashboard.add_first_server') }}
-        </a>
-    </div>
     {% endif %}
 </div>
+
+<script>
+async function confirmAction(btn, message) {
+    if (await showConfirmModal(message)) {
+        btn.closest('form').submit();
+    }
+}
+
+// Live Polling on Dashboard
+async function pollDashboardClients() {
+    try {
+        const serverRows = document.querySelectorAll('tr[data-server-id]');
+        const serverIds = new Set();
+        serverRows.forEach(r => serverIds.add(r.dataset.serverId));
+
+        for (const sid of serverIds) {
+            const res = await fetch(`/api/servers/${sid}/clients`, { credentials: 'same-origin' });
+            if (!res.ok) continue;
+            const data = await res.json();
+            if (!data.success || !data.clients) continue;
+
+            data.clients.forEach(c => {
+                const row = document.querySelector(`tr[data-client-id="${c.id}"]`);
+                if (!row) return;
+
+                const isOnline = c.stats && c.stats.is_online;
+                const pill = row.querySelector('.status-pill-container');
+                if (pill) {
+                    if (isOnline) {
+                        pill.innerHTML = '<span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-sm"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>В сети</span>';
+                    } else if (c.status === 'active') {
+                        pill.innerHTML = '<span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200"><span class="w-1.5 h-1.5 rounded-full bg-slate-400"></span>Не в сети</span>';
+                    } else {
+                        pill.innerHTML = '<span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200"><span class="w-1.5 h-1.5 rounded-full bg-rose-500"></span>Отключен</span>';
+                    }
+                }
+
+                const recEl = row.querySelector('.traffic-rec-val');
+                if (recEl) recEl.textContent = (c.bytes_received / 1048576).toFixed(1);
+
+                const sentEl = row.querySelector('.traffic-sent-val');
+                if (sentEl) sentEl.textContent = (c.bytes_sent / 1048576).toFixed(1);
+
+                const speedDownEl = row.querySelector('.speed-down-val');
+                if (speedDownEl) speedDownEl.textContent = ((c.speed_down * 8) / 1000000).toFixed(1);
+
+                const speedUpEl = row.querySelector('.speed-up-val');
+                if (speedUpEl) speedUpEl.textContent = ((c.speed_up * 8) / 1000000).toFixed(1);
+
+                const dot = row.querySelector('.online-pulse-dot');
+                if (dot) {
+                    if (isOnline) dot.classList.remove('hidden');
+                    else dot.classList.add('hidden');
+                }
+            });
+        }
+    } catch (e) {
+        console.error('Dashboard poll error:', e);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    pollDashboardClients();
+    setInterval(pollDashboardClients, 5000);
+});
+</script>
 {% endblock %}

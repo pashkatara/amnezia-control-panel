@@ -1362,7 +1362,7 @@ class VpnClient
         $config .= "PresharedKey = {$presharedKey}\n";
         $config .= "Endpoint = {$serverHost}:{$serverPort}\n";
         $config .= "AllowedIPs = 0.0.0.0/0, ::/0\n";
-        $config .= 'PersistentKeepalive = ' . ($protocolSlug === 'awg31' ? '25-35' : '25') . "\n\n";
+        $config .= "PersistentKeepalive = 25\n\n";
 
         return $config;
     }
@@ -2669,14 +2669,14 @@ class VpnClient
             $lastHandshake = strtotime($this->data['last_handshake']);
             $diff = time() - $lastHandshake;
 
-            if ($diff < 300) {
-                $lastSeen = 'Online';
+            if ($diff < 75) {
+                $lastSeen = 'В сети';
             } elseif ($diff < 3600) {
-                $lastSeen = floor($diff / 60) . ' minutes ago';
+                $lastSeen = floor($diff / 60) . ' мин назад';
             } elseif ($diff < 86400) {
-                $lastSeen = floor($diff / 3600) . ' hours ago';
+                $lastSeen = floor($diff / 3600) . ' ч назад';
             } else {
-                $lastSeen = floor($diff / 86400) . ' days ago';
+                $lastSeen = floor($diff / 86400) . ' д назад';
             }
         }
 
@@ -2685,7 +2685,7 @@ class VpnClient
             'received' => $received,
             'total' => $total,
             'last_seen' => $lastSeen,
-            'is_online' => !empty($this->data['last_handshake']) && (time() - strtotime($this->data['last_handshake'])) < 300
+            'is_online' => !empty($this->data['last_handshake']) && (time() - strtotime($this->data['last_handshake'])) < 75
         ];
     }
 

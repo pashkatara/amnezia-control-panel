@@ -28,9 +28,12 @@
       </div>
     </div>
 
-    <div class="flex items-center gap-2">
-      <a href="/clients/{{ client.id }}/download" class="inline-flex items-center px-4 py-2.5 rounded-xl shadow-lg shadow-indigo-500/20 text-xs font-semibold text-white brand-gradient hover:opacity-95 transition">
-        <i class="fas fa-download mr-1.5"></i> Скачать конфиг
+    <div class="flex flex-wrap items-center gap-2">
+      <a href="/clients/{{ client.id }}/download-vpn" class="inline-flex items-center px-4 py-2.5 rounded-xl shadow-lg shadow-indigo-500/20 text-xs font-semibold text-white brand-gradient hover:opacity-95 transition" title="Сохранить файл .vpn для отправки в мессенджере">
+        <i class="fas fa-file-download mr-1.5"></i> Сохранить для Amnezia (.vpn)
+      </a>
+      <a href="/clients/{{ client.id }}/download" class="inline-flex items-center px-3.5 py-2.5 rounded-xl text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 transition" title="Скачать обычный WireGuard конфиг">
+        <i class="fas fa-download mr-1.5"></i> .conf
       </a>
       {% if client.status == 'active' %}
         <form method="POST" action="/clients/{{ client.id }}/revoke" class="inline">
@@ -206,71 +209,104 @@
     </div>
   </div>
   
-  <!-- QR Code Section -->
-  {% if client.qr_code %}
-  <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6 sm:p-8 text-center space-y-4">
-    <h3 class="text-lg font-bold text-slate-900">
-      {% if is_awg_family_export %}Конфигурация AWG (QR-код){% else %}QR-код для подключения{% endif %}
-    </h3>
-    <div class="inline-block p-4 bg-white border border-slate-200 rounded-2xl shadow-sm">
-      <img src="{{ client.qr_code }}" alt="QR code" class="mx-auto rounded-lg" style="width: 100%; max-width: 320px; max-height: 50vh; height: auto; object-fit: contain; image-rendering: pixelated;">
+  <!-- Compact Connection & Export Card -->
+  <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6 space-y-4">
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-3 border-b border-slate-100">
+      <div>
+        <h3 class="text-base font-bold text-slate-900 flex items-center gap-2">
+          <i class="fas fa-shield-alt text-indigo-600"></i>
+          Подключение и экспорт конфигурации
+        </h3>
+        <p class="text-xs text-slate-500 mt-0.5">Скачайте файл для отправки клиенту или откройте QR-код для сканирования</p>
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <a href="/clients/{{ client.id }}/download-vpn" class="inline-flex items-center px-4 py-2 rounded-xl text-xs font-semibold text-white brand-gradient hover:opacity-95 shadow-md shadow-indigo-500/20 transition" title="Сохранить файл .vpn для отправки в Telegram/WhatsApp">
+          <i class="fas fa-file-export mr-1.5"></i> Сохранить .vpn файл
+        </a>
+        <a href="/clients/{{ client.id }}/download" class="inline-flex items-center px-3 py-2 rounded-xl text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 transition" title="Скачать обычный .conf">
+          <i class="fas fa-download mr-1.5"></i> .conf
+        </a>
+      </div>
     </div>
-    <p class="text-xs sm:text-sm text-slate-500">Отсканируйте этот QR-код в приложении Amnezia VPN на телефоне или ПК</p>
-    <div>
-      <a href="{{ client.qr_code }}" download="client-config-qr.png" class="inline-flex items-center text-xs font-semibold text-indigo-600 hover:text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg transition">
-        <i class="fas fa-download mr-1.5"></i> Скачать изображение QR
-      </a>
-    </div>
-  </div>
-  {% endif %}
 
-  <!-- Multi-part QR code for AWG -->
-  {% if is_awg_family_export and qr_code_vpn_parts %}
-  <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6 sm:p-8 text-center space-y-4">
-    <h3 class="text-lg font-bold text-slate-900">Полное подключение Amnezia (составной QR)</h3>
-    <p class="text-xs sm:text-sm text-slate-500">Сканируйте каждую часть по порядку в приложении Amnezia VPN</p>
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
-      {% for qr_part in qr_code_vpn_parts %}
-        <div class="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-2">
-          <p class="text-xs font-bold text-slate-700">Часть {{ loop.index }} из {{ loop.length }}</p>
-          <img src="{{ qr_part }}" alt="QR part {{ loop.index }}" class="mx-auto rounded-lg bg-white p-2 border border-slate-200" style="width: 100%; max-width: 280px; max-height: 40vh; height: auto; object-fit: contain; image-rendering: pixelated;">
-          <div>
-            <a href="{{ qr_part }}" download="amnezia-connection-part-{{ loop.index }}.png" class="inline-flex items-center text-xs font-semibold text-indigo-600 hover:text-indigo-700">
-              <i class="fas fa-download mr-1"></i> Скачать часть {{ loop.index }}
-            </a>
-          </div>
-        </div>
-      {% endfor %}
-    </div>
-  </div>
-  {% endif %}
+    <!-- Toggle Buttons for QR / String / Instructions -->
+    <div class="flex flex-wrap gap-2.5">
+      {% if client.qr_code %}
+      <button type="button" onclick="toggleSection('qrCodeSection', this)" class="inline-flex items-center px-4 py-2 rounded-xl text-xs font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 transition">
+        <i class="fas fa-qrcode mr-1.5 text-indigo-600"></i>
+        <span class="btn-label">Показать QR-код</span>
+      </button>
+      {% endif %}
 
-  <!-- VPN URL config -->
-  {% if is_awg_family_export and vpn_url_config %}
-  <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6 space-y-3">
-    <h3 class="text-base font-bold text-slate-900 flex items-center gap-2">
-      <i class="fas fa-link text-indigo-600"></i>
-      VPN URL Конфигурация
-    </h3>
-    <div class="bg-slate-900 p-4 rounded-xl text-left overflow-x-auto border border-slate-800">
-      <code class="text-xs font-mono text-emerald-400 break-all select-all">{{ vpn_url_config }}</code>
-    </div>
-    <p class="text-xs text-slate-500">Скопируйте эту строку vpn:// для быстрого импорта в клиент Amnezia</p>
-  </div>
-  {% endif %}
+      {% if is_awg_family_export and vpn_url_config %}
+      <button type="button" onclick="toggleSection('vpnKeySection', this)" class="inline-flex items-center px-4 py-2 rounded-xl text-xs font-semibold text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 transition">
+        <i class="fas fa-link mr-1.5 text-slate-500"></i>
+        <span class="btn-label">Ключ подключения (vpn://)</span>
+      </button>
+      {% endif %}
 
-  {% if protocol_output and client.show_text_content %}
-  <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6 space-y-3">
-    <h3 class="text-base font-bold text-slate-900 flex items-center gap-2">
-      <i class="fas fa-file-alt text-indigo-600"></i>
-      {{ t('clients.connection_instructions')|default('Инструкция по подключению') }}
-    </h3>
-    <pre class="bg-slate-50 p-4 rounded-xl text-xs font-mono text-slate-800 border border-slate-200 overflow-x-auto leading-relaxed" style="white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;">{{ protocol_output }}</pre>
+      {% if protocol_output and client.show_text_content %}
+      <button type="button" onclick="toggleSection('instructionsSection', this)" class="inline-flex items-center px-4 py-2 rounded-xl text-xs font-semibold text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 transition">
+        <i class="fas fa-file-alt mr-1.5 text-slate-500"></i>
+        <span class="btn-label">Инструкция и текст</span>
+      </button>
+      {% endif %}
+    </div>
+
+    <!-- Collapsible QR Code Section -->
+    {% if client.qr_code %}
+    <div id="qrCodeSection" class="hidden pt-4 border-t border-slate-100 text-center space-y-3">
+      <div class="inline-block p-4 bg-white border border-slate-200 rounded-2xl shadow-sm">
+        <img src="{{ client.qr_code }}" alt="QR code" class="mx-auto rounded-lg" style="width: 100%; max-width: 250px; max-height: 40vh; height: auto; object-fit: contain; image-rendering: pixelated;">
+      </div>
+      <p class="text-xs text-slate-500">Отсканируйте камерой в приложении Amnezia VPN на смартфоне или ПК</p>
+      <div>
+        <a href="{{ client.qr_code }}" download="{{ client.name|default('client') }}-qr.png" class="inline-flex items-center text-xs font-semibold text-indigo-600 hover:text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg transition">
+          <i class="fas fa-download mr-1.5"></i> Скачать изображение QR
+        </a>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Collapsible VPN URL Key Section -->
+    {% if is_awg_family_export and vpn_url_config %}
+    <div id="vpnKeySection" class="hidden pt-4 border-t border-slate-100 space-y-2">
+      <div class="flex items-center justify-between">
+        <span class="text-xs font-bold text-slate-700">Текстовая строка ключа:</span>
+        <button type="button" onclick="copyVpnKey()" id="btnCopyVpnKey" class="inline-flex items-center px-3 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-xs font-semibold border border-indigo-200 transition">
+          <i class="fas fa-copy mr-1.5"></i> Скопировать
+        </button>
+      </div>
+      <div class="bg-slate-950 p-3.5 rounded-xl text-left overflow-x-auto border border-slate-800">
+        <code class="text-xs font-mono text-emerald-400 break-all select-all" id="vpnUrlText">{{ vpn_url_config }}</code>
+      </div>
+      <p class="text-xs text-slate-500">Вставить в приложении Amnezia: <strong>«+» → «У меня есть данные» → «Текст»</strong></p>
+    </div>
+    {% endif %}
+
+    <!-- Collapsible Instructions Section -->
+    {% if protocol_output and client.show_text_content %}
+    <div id="instructionsSection" class="hidden pt-4 border-t border-slate-100 space-y-2">
+      <h4 class="text-xs font-bold text-slate-700">Инструкция и текст конфигурации:</h4>
+      <pre class="bg-slate-50 p-3.5 rounded-xl text-xs font-mono text-slate-800 border border-slate-200 overflow-x-auto leading-relaxed" style="white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;">{{ protocol_output }}</pre>
+    </div>
+    {% endif %}
   </div>
-  {% endif %}
 </div>
 
 <script>
+function toggleSection(sectionId, btn) {
+  const el = document.getElementById(sectionId);
+  if (!el) return;
+  const isHidden = el.classList.contains('hidden');
+  if (isHidden) {
+    el.classList.remove('hidden');
+    if (btn) btn.classList.add('ring-2', 'ring-indigo-500', 'bg-indigo-100');
+  } else {
+    el.classList.add('hidden');
+    if (btn) btn.classList.remove('ring-2', 'ring-indigo-500', 'bg-indigo-100');
+  }
+}
 function toggleExpirationEdit() {
   const select = document.getElementById('expirationSelect');
   const input = document.getElementById('expirationSeconds');
@@ -419,6 +455,22 @@ async function syncStats(clientId) {
   } catch (error) {
     alert('Ошибка: ' + error.message);
   }
+}
+
+function copyVpnKey() {
+  const el = document.getElementById('vpnUrlText');
+  if (!el) return;
+  const text = el.textContent || el.innerText;
+  navigator.clipboard.writeText(text.trim()).then(() => {
+    const btn = document.getElementById('btnCopyVpnKey');
+    if (btn) {
+      const orig = btn.innerHTML;
+      btn.innerHTML = '<i class="fas fa-check text-emerald-600 mr-1.5"></i> Скопировано!';
+      setTimeout(() => { btn.innerHTML = orig; }, 2000);
+    }
+  }).catch(() => {
+    prompt('Скопируйте строку подключения:', text);
+  });
 }
 </script>
 {% endblock %}

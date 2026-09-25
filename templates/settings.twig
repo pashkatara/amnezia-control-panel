@@ -56,6 +56,10 @@
                class="tab-link text-slate-600 hover:text-slate-900 hover:bg-white/60 px-4 py-2 rounded-xl flex items-center gap-2 whitespace-nowrap transition-all duration-150">
                 <i class="fas fa-cubes"></i>{{ t('settings.protocol_management') }}
             </a>
+            <a href="#" onclick="showTab('backups'); return false;" id="tab-backups"
+               class="tab-link text-slate-600 hover:text-slate-900 hover:bg-white/60 px-4 py-2 rounded-xl flex items-center gap-2 whitespace-nowrap transition-all duration-150">
+                <i class="fas fa-archive"></i>Резервные копии
+            </a>
             <a href="/admin/logs"
                class="tab-link text-slate-600 hover:text-slate-900 hover:bg-white/60 px-4 py-2 rounded-xl flex items-center gap-2 whitespace-nowrap transition-all duration-150">
                 <i class="fas fa-file-alt"></i>Логи
@@ -358,6 +362,75 @@
     <div id="content-protocols" class="tab-content hidden">
         {% include 'settings/protocols_management.twig' %}
     </div>
+
+    <!-- Backups Tab -->
+    <div id="content-backups" class="tab-content hidden space-y-6">
+        <!-- Server Select & Create Backup -->
+        <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6 space-y-4">
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-3 border-b border-slate-100">
+                <div>
+                    <h2 class="text-base font-bold text-slate-900 flex items-center gap-2">
+                        <i class="fas fa-archive text-indigo-600"></i>
+                        Резервные копии серверов
+                    </h2>
+                    <p class="text-xs text-slate-500 mt-0.5">Создание снимков клиентов и восстановление конфигураций</p>
+                </div>
+                <div class="flex items-center gap-2.5">
+                    <button type="button" onclick="createBackupForSelectedServer()" class="inline-flex items-center px-4 py-2 rounded-xl text-xs font-semibold text-white brand-gradient hover:opacity-95 shadow-md shadow-indigo-500/20 transition">
+                        <i class="fas fa-save mr-1.5"></i> Создать резервную копию
+                    </button>
+                </div>
+            </div>
+
+            <!-- Server selector -->
+            <div class="max-w-md">
+                <label class="block text-xs font-semibold text-slate-700 mb-1.5">Выберите сервер:</label>
+                <select id="backupServerSelect" onchange="loadBackupsForSelectedServer()" class="block w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 transition">
+                    {% for s in servers %}
+                        <option value="{{ s.id }}">{{ s.name }} ({{ s.host }})</option>
+                    {% else %}
+                        <option value="" disabled selected>Нет добавленных серверов</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <!-- Backups List Table -->
+            <div id="settingsBackupsList" class="pt-2">
+                <div class="text-center text-slate-400 py-6 text-xs">
+                    <i class="fas fa-spinner fa-spin mr-1"></i> Загрузка списка резервных копий...
+                </div>
+            </div>
+        </div>
+
+        <!-- Import Config to Server -->
+        <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6 space-y-4">
+            <h3 class="text-base font-bold text-slate-900 flex items-center gap-2 pb-3 border-b border-slate-100">
+                <i class="fas fa-file-import text-indigo-600"></i>
+                Импорт конфигурации или бэкапа в сервер
+            </h3>
+            <p class="text-xs text-slate-500">Загрузите файл резервной копии (.backup или .json) для импорта в выбранный сервер</p>
+            <form id="importConfigForm" onsubmit="submitConfigImport(event)" enctype="multipart/form-data" class="space-y-4 max-w-xl">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1">Тип импорта</label>
+                        <select name="import_type" id="importTypeSelect" class="block w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-xs focus:ring-2 focus:ring-indigo-500 transition">
+                            <option value="panel_backup">Бэкап панели (.json)</option>
+                            <option value="amnezia_app">Бэкап приложения (.backup)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1">Файл для импорта</label>
+                        <input type="file" name="config_file" id="importFileInput" accept=".json,.backup" required class="block w-full px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-700 text-xs file:mr-2 file:py-1 file:px-2.5 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer">
+                    </div>
+                </div>
+                <div class="pt-1 flex justify-end">
+                    <button type="submit" id="btnImportSubmit" class="inline-flex items-center px-5 py-2.5 rounded-xl shadow-lg shadow-indigo-500/20 text-xs font-semibold text-white brand-gradient hover:opacity-95 transition">
+                        <i class="fas fa-upload mr-1.5"></i> Импортировать в выбранный сервер
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
     {% endif %}
 </div>
 
@@ -379,6 +452,132 @@ function showTab(tab) {
     }
     
     window.location.hash = tab;
+
+    if (tab === 'backups') {
+        loadBackupsForSelectedServer();
+    }
+}
+
+async function loadBackupsForSelectedServer() {
+    const sel = document.getElementById('backupServerSelect');
+    const container = document.getElementById('settingsBackupsList');
+    if (!sel || !sel.value || !container) return;
+    const serverId = sel.value;
+
+    container.innerHTML = '<div class="text-center text-slate-400 py-6 text-xs"><i class="fas fa-spinner fa-spin mr-1"></i> Загрузка списка резервных копий...</div>';
+    try {
+        const res = await fetch(`/api/servers/${serverId}/backups`, { credentials: 'same-origin' });
+        const data = await res.json();
+        if (data.success && data.backups && data.backups.length > 0) {
+            let html = '<div class="overflow-x-auto"><table class="w-full divide-y divide-slate-100 text-left"><thead class="bg-slate-50/70"><tr class="text-xs font-semibold text-slate-500 uppercase tracking-wider"><th class="px-4 py-3">Дата создания</th><th class="px-4 py-3">Размер</th><th class="px-4 py-3">Клиентов</th><th class="px-4 py-3 text-right">Действия</th></tr></thead><tbody class="divide-y divide-slate-100 bg-white">';
+            data.backups.forEach(b => {
+                html += `<tr class="hover:bg-slate-50/80 transition text-xs">
+                    <td class="px-4 py-3 font-medium text-slate-900">${b.created_at}</td>
+                    <td class="px-4 py-3 text-slate-500 font-mono">${(b.size_bytes / 1024).toFixed(1)} KB</td>
+                    <td class="px-4 py-3"><span class="px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 font-semibold">${b.clients_count || 0}</span></td>
+                    <td class="px-4 py-3 text-right">
+                        <div class="inline-flex items-center gap-1.5">
+                            <button onclick="restoreServerBackup(${b.id})" class="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg font-semibold transition" title="Восстановить"><i class="fas fa-undo mr-1"></i>Восстановить</button>
+                            <a href="/api/backups/${b.id}/download" class="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-semibold transition" title="Скачать"><i class="fas fa-download mr-1"></i>Скачать</a>
+                            <button onclick="deleteServerBackup(${b.id})" class="p-1 text-rose-600 hover:text-rose-800 rounded-lg hover:bg-rose-50 transition" title="Удалить"><i class="fas fa-trash-alt"></i></button>
+                        </div>
+                    </td>
+                </tr>`;
+            });
+            html += '</tbody></table></div>';
+            container.innerHTML = html;
+        } else {
+            container.innerHTML = '<div class="text-center py-6 text-slate-400 text-xs"><i class="fas fa-archive text-2xl mb-1.5 block"></i>Резервных копий пока нет</div>';
+        }
+    } catch (e) {
+        container.innerHTML = `<div class="text-center py-4 text-rose-500 text-xs">Ошибка загрузки: ${e.message}</div>`;
+    }
+}
+
+async function createBackupForSelectedServer() {
+    const sel = document.getElementById('backupServerSelect');
+    if (!sel || !sel.value) { alert('Сначала выберите сервер'); return; }
+    const serverId = sel.value;
+    try {
+        const res = await fetch(`/api/servers/${serverId}/backup`, { method: 'POST', credentials: 'same-origin' });
+        const data = await res.json();
+        if (data.success) {
+            alert('Резервная копия успешно создана!');
+            loadBackupsForSelectedServer();
+        } else {
+            alert('Ошибка: ' + (data.error || 'Не удалось создать копию'));
+        }
+    } catch (e) {
+        alert('Ошибка сети: ' + e.message);
+    }
+}
+
+async function restoreServerBackup(backupId) {
+    if (!confirm('Восстановить клиентов из этой резервной копии?')) return;
+    try {
+        const res = await fetch(`/api/servers/1/restore`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ backup_id: backupId }),
+            credentials: 'same-origin'
+        });
+        const data = await res.json();
+        if (data.success) {
+            alert('Восстановление успешно завершено!');
+            location.reload();
+        } else {
+            alert('Ошибка: ' + (data.error || 'Не удалось восстановить'));
+        }
+    } catch (e) {
+        alert('Ошибка сети: ' + e.message);
+    }
+}
+
+async function deleteServerBackup(backupId) {
+    if (!confirm('Удалить эту резервную копию навсегда?')) return;
+    try {
+        const res = await fetch(`/api/backups/${backupId}`, { method: 'DELETE', credentials: 'same-origin' });
+        const data = await res.json();
+        if (data.success) {
+            loadBackupsForSelectedServer();
+        } else {
+            alert('Ошибка: ' + (data.error || 'Не удалось удалить'));
+        }
+    } catch (e) {
+        alert('Ошибка сети: ' + e.message);
+    }
+}
+
+async function submitConfigImport(e) {
+    e.preventDefault();
+    const sel = document.getElementById('backupServerSelect');
+    if (!sel || !sel.value) { alert('Сначала выберите сервер'); return; }
+    const serverId = sel.value;
+    const form = document.getElementById('importConfigForm');
+    const formData = new FormData(form);
+
+    const btn = document.getElementById('btnImportSubmit');
+    const orig = btn ? btn.innerHTML : '';
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> Импорт...'; }
+
+    try {
+        const res = await fetch(`/servers/${serverId}/config/import`, {
+            method: 'POST',
+            body: formData,
+            credentials: 'same-origin'
+        });
+        if (res.ok) {
+            alert('Импорт успешно выполнен!');
+            window.location.href = `/servers/${serverId}`;
+        } else {
+            const data = await res.json().catch(() => ({ error: 'Ошибка сервера' }));
+            alert('Ошибка: ' + (data.error || 'Не удалось импортировать'));
+        }
+    } catch (err) {
+        alert('Ошибка сети: ' + err.message);
+    } finally {
+        if (btn) { btn.disabled = false; btn.innerHTML = orig; }
+    }
 }
 
 document.addEventListener('DOMContentLoaded', function() {
