@@ -82,6 +82,18 @@ cd /opt/amnezia-panel
 
 ---
 
+## 🗑️ Удаление панели с сервера (1 команда)
+
+Если вам потребуется полностью удалить панель управления с сервера:
+
+```bash
+bash <(curl -sSL https://raw.githubusercontent.com/pashkatara/amnezia-control-panel/main/uninstall.sh)
+```
+
+Скрипт остановит и удалит Docker-контейнеры панели, базу данных, закроет порт в файрволе и очистит папку `/opt/amnezia-panel`. При этом ваши VPN-контейнеры с клиентами останутся нетронутыми.
+
+---
+
 ## 📋 Системные требования
 
 * **ОС:** Linux (Ubuntu 20.04+, Debian 11+, CentOS 8+, AlmaLinux)
