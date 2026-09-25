@@ -1,0 +1,27 @@
+{
+  "name": "amnezia/web-panel",
+  "description": "Amnezia VPN Web Management Panel",
+  "type": "project",
+  "license": "MIT",
+  "authors": [
+    {
+      "name": "Amnezia VPN Community"
+    }
+  ],
+  "require": {
+    "php": ">=8.0",
+    "twig/twig": "^3.8",
+    "endroid/qr-code": "^4.8 || ^5.0",
+    "firebase/php-jwt": "^7.0",
+    "ext-pdo": "*",
+    "ext-json": "*",
+    "ext-curl": "*",
+    "ext-gd": "*",
+    "ext-sodium": "*"
+  },
+  "autoload": {
+    "psr-4": {
+      "": "inc/"
+    }
+  }
+}

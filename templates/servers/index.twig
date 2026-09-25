@@ -1,0 +1,231 @@
+{% extends "layout.twig" %}
+{% block title %}{{ t('servers.title') }} — {{ app_name }}{% endblock %}
+
+{% block styles %}
+<style>
+.server-metrics {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    font-size: 0.75rem;
+}
+.metric-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    white-space: nowrap;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: #334155;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
+  <!-- Header -->
+  <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+    <div>
+      <h1 class="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight flex items-center gap-3">
+        <span class="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-100 flex items-center justify-center text-lg shadow-sm">
+          <i class="fas fa-server"></i>
+        </span>
+        {{ t('servers.title') }}
+      </h1>
+      <p class="mt-1 text-sm text-slate-500">Управление физическими и виртуальными серверами VPN</p>
+    </div>
+    <div class="flex items-center gap-3">
+      <a href="/servers/create" class="inline-flex items-center justify-center px-4 py-2.5 rounded-xl shadow-lg shadow-indigo-500/20 text-sm font-semibold text-white brand-gradient hover:opacity-95 transition duration-150">
+        <i class="fas fa-plus mr-2"></i>
+        {{ t('servers.add') }}
+      </a>
+    </div>
+  </div>
+  
+  {% if session.success_message %}
+  <div class="bg-emerald-50 border border-emerald-200 text-emerald-800 px-4 py-3.5 rounded-xl text-sm flex items-center gap-3 shadow-sm">
+    <i class="fas fa-check-circle text-emerald-500 text-base"></i>
+    <p>{{ session.success_message }}</p>
+  </div>
+  {% endif %}
+  
+  {% if session.error_message %}
+  <div class="bg-rose-50 border border-rose-200 text-rose-800 px-4 py-3.5 rounded-xl text-sm flex items-center gap-3 shadow-sm">
+    <i class="fas fa-exclamation-circle text-rose-500 text-base"></i>
+    <p>{{ session.error_message }}</p>
+  </div>
+  {% endif %}
+  
+  {% if servers|length > 0 %}
+  <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
+    <div class="overflow-x-auto">
+      <table class="w-full divide-y divide-slate-100">
+        <thead class="bg-slate-50/70">
+          <tr class="text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
+            <th class="px-6 py-3.5">{{ t('servers.name') }}</th>
+            <th class="px-6 py-3.5">{{ t('servers.host') }}</th>
+            <th class="px-6 py-3.5">{{ t('servers.status') }}</th>
+            <th class="px-6 py-3.5">{{ t('common.metrics')|default('Метрики') }}</th>
+            <th class="px-6 py-3.5 text-right">{{ t('servers.actions') }}</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100 bg-white">
+          {% for server in servers %}
+          <tr class="hover:bg-slate-50/80 transition-colors" data-server-id="{{ server.id }}">
+            <td class="px-6 py-4 whitespace-nowrap">
+              <div class="flex items-center">
+                <div class="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-100 flex items-center justify-center font-bold text-sm mr-3 shadow-inner">
+                  <i class="fas fa-hdd"></i>
+                </div>
+                <div>
+                  <a href="/servers/{{ server.id }}" class="text-sm font-semibold text-slate-900 hover:text-indigo-600 transition">
+                    {{ server.name }}
+                  </a>
+                  <div class="text-xs text-slate-400">Порт: {{ server.port|default(22) }}</div>
+                </div>
+              </div>
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap text-sm font-mono text-slate-600">
+              {{ server.host }}
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap">
+              {% if server.status == 'active' %}
+              <span class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                {{ t('status.active') }}
+              </span>
+              {% elseif server.status == 'deploying' %}
+              <span class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-full bg-amber-50 text-amber-700 border border-amber-200">
+                <i class="fas fa-spinner fa-spin text-[10px]"></i>
+                {{ t('status.deploying') }}
+              </span>
+              {% else %}
+              <span class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-full bg-rose-50 text-rose-700 border border-rose-200">
+                <span class="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
+                {{ server.status|capitalize }}
+              </span>
+              {% endif %}
+            </td>
+            <td class="px-6 py-4">
+              {% if server.status == 'active' %}
+              <div class="server-metrics" id="metrics-{{ server.id }}">
+                <div class="metric-badge" title="Загрузка процессора">
+                  <i class="fas fa-microchip text-rose-500"></i>
+                  <span class="metric-val" data-metric="cpu">--</span>
+                </div>
+                <div class="metric-badge" title="Оперативная память">
+                  <i class="fas fa-memory text-amber-500"></i>
+                  <span class="metric-val" data-metric="ram">--</span>
+                </div>
+                <div class="metric-badge" title="Использование диска">
+                  <i class="fas fa-hdd text-sky-500"></i>
+                  <span class="metric-val" data-metric="disk">--</span>
+                </div>
+                <div class="metric-badge" title="Скорость сети (загрузка/отдача)">
+                  <i class="fas fa-network-wired text-emerald-500"></i>
+                  <span class="metric-val" data-metric="network">--</span>
+                </div>
+              </div>
+              {% else %}
+              <span class="text-slate-400 text-xs italic">Не развернут</span>
+              {% endif %}
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap text-right text-sm">
+              <div class="inline-flex items-center gap-2">
+                <a href="/servers/{{ server.id }}" class="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 hover:text-indigo-700 transition">
+                  <i class="fas fa-eye mr-1.5"></i> {{ t('servers.view') }}
+                </a>
+                <form method="POST" action="/servers/{{ server.id }}/delete" class="inline" id="delete-form-{{ server.id }}">
+                  <button type="button" class="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold text-rose-600 bg-rose-50 hover:bg-rose-100 hover:text-rose-700 transition" onclick="(async()=>{ event.stopPropagation(); if(await showConfirmModal('Удалить сервер {{ server.name }} навсегда?', 'Удаление сервера')) { document.getElementById('delete-form-{{ server.id }}').submit(); } })()">
+                    <i class="fas fa-trash mr-1.5"></i> {{ t('servers.delete') }}
+                  </button>
+                </form>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% else %}
+  <div class="bg-white rounded-2xl border border-slate-200/80 p-12 text-center shadow-sm max-w-xl mx-auto">
+    <div class="w-16 h-16 rounded-2xl bg-indigo-50 text-indigo-500 border border-indigo-100 flex items-center justify-center text-3xl mx-auto mb-4">
+      <i class="fas fa-server"></i>
+    </div>
+    <h3 class="text-lg font-bold text-slate-900 mb-1">{{ t('dashboard.no_servers') }}</h3>
+    <p class="text-sm text-slate-500 mb-6">{{ t('dashboard.get_started') }}</p>
+    <a href="/servers/create" class="inline-flex items-center justify-center px-5 py-2.5 rounded-xl shadow-lg shadow-indigo-500/20 text-sm font-semibold text-white brand-gradient hover:opacity-95 transition">
+      <i class="fas fa-plus mr-2"></i>
+      {{ t('dashboard.add_first_server') }}
+    </a>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Get all active server IDs
+const activeServers = [
+  {% for server in servers %}
+  {% if server.status == 'active' %}
+  {{ server.id }},
+  {% endif %}
+  {% endfor %}
+];
+
+async function updateServerMetrics(serverId) {
+  try {
+    const response = await fetch(`/api/servers/${serverId}/metrics?hours=1`, {
+      credentials: 'same-origin'
+    });
+    
+    const data = await response.json();
+    
+    console.log(`Server ${serverId} metrics:`, data);
+    
+    if (data.success && data.metrics.length > 0) {
+      const latest = data.metrics[data.metrics.length - 1];
+      const metricsDiv = document.getElementById(`metrics-${serverId}`);
+      
+      console.log(`Server ${serverId} latest:`, latest);
+      
+      if (metricsDiv) {
+        const cpuVal = parseFloat(latest.cpu_percent).toFixed(1);
+        metricsDiv.querySelector('[data-metric="cpu"]').textContent = `${cpuVal}%`;
+        
+        const ramPercent = (latest.ram_used_mb / latest.ram_total_mb * 100).toFixed(0);
+        metricsDiv.querySelector('[data-metric="ram"]').textContent = `${ramPercent}%`;
+        
+        const diskPercent = (latest.disk_used_gb / latest.disk_total_gb * 100).toFixed(0);
+        metricsDiv.querySelector('[data-metric="disk"]').textContent = `${diskPercent}%`;
+        
+        const netRx = parseFloat(latest.network_rx_mbps).toFixed(1);
+        const netTx = parseFloat(latest.network_tx_mbps).toFixed(1);
+        metricsDiv.querySelector('[data-metric="network"]').textContent = `↓${netRx}↑${netTx}`;
+      }
+    }
+  } catch (error) {
+    console.error(`Failed to fetch metrics for server ${serverId}:`, error);
+  }
+}
+
+function updateAllMetrics() {
+  activeServers.forEach(serverId => {
+    updateServerMetrics(serverId);
+  });
+}
+
+// Initial load
+if (activeServers.length > 0) {
+  updateAllMetrics();
+  // Update every 30 seconds
+  setInterval(updateAllMetrics, 30000);
+}
+</script>
+{% endblock %}

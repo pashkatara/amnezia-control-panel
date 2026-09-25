@@ -1,0 +1,173 @@
+{% extends "layout.twig" %}
+{% block title %}Развертывание {{ server.name }} — {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
+  <div class="flex items-center justify-between pb-2 border-b border-slate-200">
+    <div class="flex items-center gap-3">
+      <a href="/servers/{{ server.id }}" class="w-10 h-10 rounded-xl bg-white border border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-50 flex items-center justify-center transition shadow-sm">
+        <i class="fas fa-arrow-left"></i>
+      </a>
+      <div>
+        <h1 class="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight">Развертывание: {{ server.name }}</h1>
+        <p class="text-xs sm:text-sm text-slate-500 font-mono">Протокол установки: <span class="font-semibold text-indigo-600">{{ server.install_protocol ?? 'amnezia-wg' }}</span></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Terminal Window -->
+  <div class="rounded-2xl overflow-hidden shadow-2xl border border-slate-800 bg-slate-950">
+    <div class="bg-slate-900 px-4 py-3 flex items-center justify-between border-b border-slate-800">
+      <div class="flex items-center gap-2">
+        <span class="w-3 h-3 rounded-full bg-rose-500 inline-block"></span>
+        <span class="w-3 h-3 rounded-full bg-amber-500 inline-block"></span>
+        <span class="w-3 h-3 rounded-full bg-emerald-500 inline-block"></span>
+        <span class="ml-2 text-xs font-mono text-slate-400">root@{{ server.host }} ~ install_log</span>
+      </div>
+      <div class="text-xs font-mono text-slate-500 flex items-center gap-1.5">
+        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+        SSH Terminal
+      </div>
+    </div>
+    
+    <div id="deployLog" class="p-6 font-mono text-xs sm:text-sm text-emerald-400 h-[420px] overflow-y-auto space-y-1.5 leading-relaxed bg-slate-950">
+      <div class="text-slate-500">// Готово к запуску развертывания сервера...</div>
+    </div>
+  </div>
+
+  <div id="deployActions" class="flex flex-wrap gap-3 mb-4 hidden"></div>
+
+  <div class="flex justify-end gap-3 pt-2">
+    <a href="/servers/{{ server.id }}" class="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-semibold rounded-xl transition">
+      Назад
+    </a>
+    <button id="deployBtn" onclick="deploy()" class="inline-flex items-center px-6 py-2.5 rounded-xl shadow-lg shadow-indigo-500/25 text-sm font-semibold text-white brand-gradient hover:opacity-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+      <span id="btnText"><i class="fas fa-play mr-2"></i>Начать развертывание</span>
+      <i id="btnSpinner" class="fas fa-spinner fa-spin ml-2 hidden"></i>
+    </button>
+  </div>
+</div>
+
+<script>
+let pendingDecisionToken = null;
+
+function setButtonState(isProcessing, label) {
+  const btn = document.getElementById('deployBtn');
+  const btnText = document.getElementById('btnText');
+  const btnSpinner = document.getElementById('btnSpinner');
+  btn.disabled = isProcessing;
+  btnText.textContent = label;
+  if (isProcessing) {
+    btnSpinner.classList.remove('hidden');
+  } else {
+    btnSpinner.classList.add('hidden');
+  }
+}
+
+function appendLog(message, cssClass) {
+  const log = document.getElementById('deployLog');
+  const line = document.createElement('div');
+  if (cssClass) {
+    line.className = cssClass;
+  }
+  line.innerHTML = message;
+  log.appendChild(line);
+  log.scrollTop = log.scrollHeight;
+}
+
+function hideActions() {
+  const actions = document.getElementById('deployActions');
+  actions.classList.add('hidden');
+  actions.innerHTML = '';
+}
+
+function showActions(options) {
+  const actions = document.getElementById('deployActions');
+  actions.innerHTML = '';
+  Object.keys(options || {}).forEach(key => {
+    const option = options[key];
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = option.label || key;
+    btn.className = 'px-4 py-2.5 rounded-xl bg-white text-slate-800 border border-slate-200 shadow-sm hover:bg-slate-50 font-medium text-xs sm:text-sm transition';
+    btn.onclick = function () {
+      hideActions();
+      deploy(option.mode || key);
+    };
+    actions.appendChild(btn);
+  });
+  if (actions.childElementCount > 0) {
+    actions.classList.remove('hidden');
+  }
+}
+
+function deploy(mode) {
+  const payload = {};
+  if (mode) {
+    payload.install_mode = mode;
+  }
+  if (pendingDecisionToken) {
+    payload.decision_token = pendingDecisionToken;
+  }
+
+  if (!mode) {
+    pendingDecisionToken = null;
+    document.getElementById('deployLog').innerHTML = '';
+    appendLog('📡 Подключение к серверу...');
+    appendLog('🔧 Подготовка окружения и запуск скриптов...');
+  }
+
+  hideActions();
+  setButtonState(true, mode ? 'Выполнение...' : 'Развертывание...');
+
+  fetch('/servers/{{ server.id }}/deploy', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  })
+    .then(async response => {
+      const data = await response.json().catch(() => ({ success: false, error: 'Некорректный ответ сервера' }));
+      if (!response.ok && !data.requires_action) {
+        throw new Error(data.error || ('HTTP ' + response.status));
+      }
+      return data;
+    })
+    .then(data => {
+      if (data.requires_action) {
+        pendingDecisionToken = data.decision_token || null;
+        const details = data.details || {};
+        appendLog('⚠️ ' + (details.message || 'Обнаружена существующая конфигурация'), 'text-amber-300 font-bold');
+        if (details.details && details.details.summary) {
+          appendLog(details.details.summary, 'text-amber-200');
+        } else if (details.details) {
+          appendLog(JSON.stringify(details.details), 'text-amber-200 text-xs');
+        }
+        showActions(data.options);
+        setButtonState(false, 'Выберите действие');
+        return;
+      }
+
+      if (data.success) {
+        pendingDecisionToken = null;
+        hideActions();
+        appendLog('✅ Развертывание успешно завершено!', 'text-emerald-400 font-bold text-base mt-2');
+        if (data.vpn_port) {
+          appendLog('🔌 VPN Порт: ' + data.vpn_port, 'text-amber-300');
+        }
+        if (data.public_key) {
+          appendLog('🔑 Публичный ключ: ' + data.public_key.substring(0, 40) + '...', 'text-amber-300');
+        }
+        setButtonState(true, 'Перенаправление...');
+        setTimeout(() => window.location.href = '/servers/{{ server.id }}', 2000);
+      } else {
+        appendLog('❌ Ошибка: ' + (data.error || 'Неизвестная ошибка'), 'text-rose-400 font-bold');
+        setButtonState(false, 'Повторить попытку');
+      }
+    })
+    .catch(error => {
+      appendLog('❌ Ошибка сети: ' + error.message, 'text-rose-400 font-bold');
+      setButtonState(false, 'Повторить попытку');
+    });
+}
+</script>
+{% endblock %}

@@ -1,0 +1,1522 @@
+<?php
+require_once __DIR__ . '/Ssh.php';
+
+/**
+ * VPN Server Management Class
+ * Handles deployment and management of Amnezia VPN servers
+ * Based on amnezia_deploy_v2.php
+ */
+class VpnServer
+{
+    private $serverId;
+    private $data;
+    
+    /**
+     * Cache for docker sudo requirements per server.
+     * null = not tested, true = needs sudo, false = no sudo needed
+     * @var array<int, bool|null>
+     */
+    private static $dockerSudoCache = [];
+
+    public function __construct(?int $serverId = null)
+    {
+        $this->serverId = $serverId;
+        if ($serverId) {
+            $this->load();
+        }
+    }
+
+    public function getId(): int
+    {
+        return (int) $this->serverId;
+    }
+
+    public function refresh(): void
+    {
+        if ($this->serverId === null) {
+            throw new Exception('Server ID is not set');
+        }
+        $this->load();
+    }
+
+    /**
+     * Load server data from database
+     */
+    private function load(): void
+    {
+        $pdo = DB::conn();
+        $stmt = $pdo->prepare('SELECT * FROM vpn_servers WHERE id = ?');
+        $stmt->execute([$this->serverId]);
+        $this->data = $stmt->fetch();
+        if (!$this->data) {
+            throw new Exception('Server not found');
+        }
+    }
+
+    /**
+     * Normalize SSH private key: fix line endings, trim whitespace, ensure trailing newline.
+     * Fixes "error in libcrypto" when keys are pasted from Windows or browsers.
+     */
+    private static function normalizeSshKey(string $key): string
+    {
+        // Remove \r (Windows line endings)
+        $key = str_replace("\r\n", "\n", $key);
+        $key = str_replace("\r", "\n", $key);
+        // Trim each line (remove trailing spaces)
+        $lines = explode("\n", $key);
+        $lines = array_map('rtrim', $lines);
+        // Remove empty lines at start/end but keep internal structure
+        while (!empty($lines) && trim($lines[0]) === '') array_shift($lines);
+        while (!empty($lines) && trim(end($lines)) === '') array_pop($lines);
+        $key = implode("\n", $lines);
+        // PEM/OpenSSH keys MUST end with a newline
+        if ($key !== '' && substr($key, -1) !== "\n") {
+            $key .= "\n";
+        }
+        return $key;
+    }
+
+    /**
+     * Docker container names are limited to [A-Za-z0-9][A-Za-z0-9_.-]* by
+     * Docker itself; enforcing it here keeps the value safe to embed in the
+     * remote shell commands that reference the container.
+     */
+    private static function sanitizeContainerName($name): string
+    {
+        $name = trim((string) ($name ?? ''));
+
+        if ($name === '') {
+            return 'amnezia-awg';
+        }
+
+        if (!preg_match('/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/', $name)) {
+            throw new Exception('Invalid container name');
+        }
+
+        return $name;
+    }
+
+    /**
+     * The subnet is written into wg0.conf on the server, so it must not be able
+     * to carry shell syntax.
+     */
+    private static function sanitizeSubnet($subnet): string
+    {
+        $subnet = trim((string) ($subnet ?? ''));
+
+        if ($subnet === '') {
+            return '10.8.1.0/24';
+        }
+
+        if (!preg_match('#^([0-9.]+|[0-9A-Fa-f:]+)/([0-9]{1,3})$#', $subnet, $m)) {
+            throw new Exception('Invalid VPN subnet: expected CIDR notation');
+        }
+
+        $prefix = (int) $m[2];
+        $isV6 = strpos($m[1], ':') !== false;
+
+        if (filter_var($m[1], FILTER_VALIDATE_IP) === false || $prefix > ($isV6 ? 128 : 32)) {
+            throw new Exception('Invalid VPN subnet: expected CIDR notation');
+        }
+
+        return $subnet;
+    }
+
+    /**
+     * Create new VPN server in database
+     */
+    public static function create(array $data): int
+    {
+        $pdo = DB::conn();
+
+        // Validate required fields
+        $required = ['user_id', 'name', 'host', 'port', 'username'];
+        foreach ($required as $field) {
+            if (empty($data[$field])) {
+                throw new Exception("Field {$field} is required");
+            }
+        }
+
+        if (empty($data['password']) && empty($data['ssh_key'])) {
+            throw new Exception("Either password or SSH key is required");
+        }
+
+        // Reject shell metacharacters before they are stored: these values are
+        // later used to build ssh command lines.
+        $data['host'] = Ssh::host((string) $data['host']);
+        $data['username'] = Ssh::user((string) $data['username']);
+        $data['port'] = Ssh::port($data['port']);
+        $data['container_name'] = self::sanitizeContainerName($data['container_name'] ?? null);
+        $data['vpn_subnet'] = self::sanitizeSubnet($data['vpn_subnet'] ?? null);
+
+        $protocolSlug = trim((string) ($data['install_protocol'] ?? ''));
+        if ($protocolSlug === '') {
+            throw new Exception('Install protocol must be selected');
+        }
+        $installOptions = $data['install_options'] ?? null;
+
+        if (is_array($installOptions)) {
+            $installOptions = json_encode($installOptions);
+        } elseif (is_string($installOptions)) {
+            $installOptions = trim($installOptions) === '' ? null : $installOptions;
+        }
+
+        $stmt = $pdo->prepare('
+            INSERT INTO vpn_servers 
+            (user_id, name, host, port, username, password, ssh_key, container_name, install_protocol, install_options, vpn_subnet, status) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ');
+
+        $stmt->execute([
+            $data['user_id'],
+            $data['name'],
+            $data['host'],
+            $data['port'],
+            $data['username'],
+            $data['password'] ?? null,
+            !empty($data['ssh_key']) ? self::normalizeSshKey($data['ssh_key']) : null,
+            $data['container_name'],
+            $protocolSlug,
+            $installOptions,
+            $data['vpn_subnet'],
+            'deploying'
+        ]);
+
+        return (int) $pdo->lastInsertId();
+    }
+
+    /**
+     * Import existing VPN server from backup payload without deployment.
+     */
+    public static function importFromBackup(int $userId, array $serverData): int
+    {
+        $pdo = DB::conn();
+
+        $name = trim($serverData['name'] ?? '');
+        $host = trim($serverData['host'] ?? '');
+        if ($name === '' || $host === '') {
+            throw new Exception('Backup is missing server name or host');
+        }
+
+        // A backup file is attacker-supplied input, so it gets the same
+        // validation as a manually created server.
+        $host = Ssh::host($host);
+        $port = Ssh::port($serverData['ssh_port'] ?? 22);
+        $username = Ssh::user(trim($serverData['ssh_username'] ?? 'root') ?: 'root');
+        $password = (string) ($serverData['ssh_password'] ?? '');
+        $containerName = self::sanitizeContainerName($serverData['container_name'] ?? null);
+        $vpnPort = isset($serverData['vpn_port']) && $serverData['vpn_port'] !== null
+            ? (int) $serverData['vpn_port']
+            : null;
+        $vpnSubnet = self::sanitizeSubnet($serverData['vpn_subnet'] ?? null);
+        $serverPublicKey = $serverData['server_public_key'] ?? null;
+        $presharedKey = $serverData['preshared_key'] ?? null;
+
+        $awgParams = $serverData['awg_params'] ?? null;
+        if (is_array($awgParams)) {
+            $awgParams = json_encode($awgParams);
+        }
+
+        $installProtocol = $serverData['install_protocol'] ?? 'amnezia-wg';
+        $installOptions = $serverData['install_options'] ?? null;
+        if (is_array($installOptions)) {
+            $installOptions = json_encode($installOptions);
+        }
+
+        $stmt = $pdo->prepare('
+            INSERT INTO vpn_servers 
+            (user_id, name, host, port, username, password, container_name, install_protocol, install_options, vpn_port, vpn_subnet, 
+             server_public_key, preshared_key, awg_params, status, deployed_at, error_message)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NULL)
+        ');
+
+        $stmt->execute([
+            $userId,
+            $name,
+            $host,
+            $port,
+            $username,
+            $password,
+            $containerName,
+            $installProtocol,
+            $installOptions,
+            $vpnPort,
+            $vpnSubnet,
+            $serverPublicKey,
+            $presharedKey,
+            $awgParams,
+            'active'
+        ]);
+
+        $serverId = (int) $pdo->lastInsertId();
+        foreach (($serverData['server_protocols'] ?? []) as $binding) {
+            $slug = trim((string) ($binding['slug'] ?? ''));
+            if ($slug === '') continue;
+            $find = $pdo->prepare('SELECT id FROM protocols WHERE slug = ? LIMIT 1');
+            $find->execute([$slug]);
+            $protocolId = (int) $find->fetchColumn();
+            if ($protocolId <= 0) {
+                if (in_array($slug, ['awg31', 'awg2', 'amnezia-wg-advanced', 'amnezia-wg'], true)) {
+                    $fallbackSlugs = ['awg31', 'awg2', 'amnezia-wg-advanced', 'amnezia-wg'];
+                    foreach ($fallbackSlugs as $fb) {
+                        $find->execute([$fb]);
+                        $protocolId = (int) $find->fetchColumn();
+                        if ($protocolId > 0) break;
+                    }
+                }
+            }
+            if ($protocolId <= 0) continue;
+            $configData = $binding['config_data'] ?? null;
+            if (is_array($configData)) $configData = json_encode($configData, JSON_UNESCAPED_SLASHES);
+            $insert = $pdo->prepare('INSERT INTO server_protocols (server_id, protocol_id, config_data, applied_at, created_at) VALUES (?, ?, ?, NOW(), NOW()) ON DUPLICATE KEY UPDATE config_data = VALUES(config_data), applied_at = NOW()');
+            $insert->execute([$serverId, $protocolId, $configData]);
+        }
+        return $serverId;
+    }
+
+    /**
+     * Apply server configuration from backup payload to an existing record.
+     */
+    public function applyBackupData(array $serverData, int $userId, bool $replaceClients = true): array
+    {
+        if (!$this->data) {
+            throw new Exception('Server not loaded');
+        }
+
+        $pdo = DB::conn();
+        $updates = [];
+        $params = [];
+        $updatedFields = [];
+
+        $mapString = function (?string $value): ?string {
+            $value = trim((string) $value);
+            return $value === '' ? null : $value;
+        };
+
+        $stringFields = [
+            'name' => $mapString($serverData['name'] ?? null),
+            'host' => $mapString($serverData['host'] ?? null),
+            'username' => $mapString($serverData['ssh_username'] ?? null),
+            'password' => isset($serverData['ssh_password']) ? (string) $serverData['ssh_password'] : null,
+            'container_name' => $mapString($serverData['container_name'] ?? null),
+            'vpn_subnet' => $mapString($serverData['vpn_subnet'] ?? null),
+            'server_public_key' => $mapString($serverData['server_public_key'] ?? null),
+            'preshared_key' => isset($serverData['preshared_key']) ? (string) $serverData['preshared_key'] : null,
+            'install_protocol' => $mapString($serverData['install_protocol'] ?? null),
+        ];
+
+        foreach ($stringFields as $column => $value) {
+            if ($value !== null) {
+                $updates[] = $column . ' = ?';
+                $params[] = $value;
+                $updatedFields[] = $column;
+            }
+        }
+
+        if (isset($serverData['ssh_port']) && $serverData['ssh_port'] !== null) {
+            $port = (int) $serverData['ssh_port'];
+            if ($port > 0) {
+                $updates[] = 'port = ?';
+                $params[] = $port;
+                $updatedFields[] = 'port';
+            }
+        }
+
+        if (isset($serverData['vpn_port']) && $serverData['vpn_port'] !== null) {
+            $vpnPort = (int) $serverData['vpn_port'];
+            if ($vpnPort > 0) {
+                $updates[] = 'vpn_port = ?';
+                $params[] = $vpnPort;
+                $updatedFields[] = 'vpn_port';
+            }
+        }
+
+        if (isset($serverData['awg_params'])) {
+            $awgParams = $serverData['awg_params'];
+            if (is_array($awgParams)) {
+                $awgParams = json_encode($awgParams);
+            }
+            if (is_string($awgParams)) {
+                $updates[] = 'awg_params = ?';
+                $params[] = $awgParams;
+                $updatedFields[] = 'awg_params';
+            }
+        }
+
+        if (isset($serverData['install_options'])) {
+            $installOptions = $serverData['install_options'];
+            if (is_array($installOptions)) {
+                $installOptions = json_encode($installOptions);
+            }
+            if (is_string($installOptions)) {
+                $updates[] = 'install_options = ?';
+                $params[] = $installOptions;
+                $updatedFields[] = 'install_options';
+            }
+        }
+
+        if ($updates) {
+            $params[] = $this->serverId;
+            $sql = 'UPDATE vpn_servers SET ' . implode(', ', $updates) . ' WHERE id = ?';
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute($params);
+            $this->load();
+        }
+
+        $imported = 0;
+        $failed = [];
+        $clients = $serverData['clients'] ?? [];
+        $shouldReplaceClients = $replaceClients && is_array($clients) && !empty($clients) && ($this->data['status'] ?? '') !== 'active';
+
+        if ($shouldReplaceClients) {
+            $pdo->prepare('DELETE FROM vpn_clients WHERE server_id = ?')->execute([$this->serverId]);
+            $this->load();
+        }
+
+        if (is_array($clients) && !empty($clients)) {
+            $serverRecord = $this->getData();
+            foreach ($clients as $clientData) {
+                try {
+                    $id = VpnClient::importFromBackup($serverRecord, $userId, $clientData);
+                    if ($id !== null) {
+                        $imported++;
+                    }
+                } catch (Exception $e) {
+                    $failed[] = $e->getMessage();
+                }
+            }
+        }
+
+        return [
+            'updated_fields' => $updatedFields,
+            'imported_clients' => $imported,
+            'client_errors' => $failed,
+        ];
+    }
+
+    /**
+     * Deploy VPN server using amnezia_deploy_v2.php logic
+     */
+    public function deploy(array $options = []): array
+    {
+        return InstallProtocolManager::deploy($this, $options);
+    }
+
+    /**
+     * Legacy AmneziaWG deployment routine kept for backward compatibility.
+     */
+    public function runAwgInstall(array $options = []): array
+    {
+        if (!$this->data) {
+            throw new Exception('Server not loaded');
+        }
+
+        $pdo = DB::conn();
+        $errors = [];
+
+        try {
+            // Update status to deploying
+            $pdo->prepare('UPDATE vpn_servers SET status = ? WHERE id = ?')
+                ->execute(['deploying', $this->serverId]);
+
+            // Test SSH connection
+            if (!$this->testConnection()) {
+                throw new Exception('SSH connection failed');
+            }
+
+            // Install Docker if needed
+            $this->installDocker();
+
+            // Create directories
+            $this->executeCommand('mkdir -p /opt/amnezia/amnezia-awg', true);
+
+            // Find free UDP port
+            $vpnPort = $this->findFreeUdpPort();
+
+            // Create Dockerfile
+            $this->createDockerfile();
+
+            // Create start script
+            $this->createStartScript();
+
+            // Build Docker image
+            $this->buildDockerImage();
+
+            // Run container
+            $this->runContainer($vpnPort);
+
+            // Initialize server config
+            $keys = $this->initializeServerConfig($vpnPort);
+
+            // Update database with deployment info
+            $stmt = $pdo->prepare('
+                UPDATE vpn_servers 
+                SET vpn_port = ?, 
+                    server_public_key = ?, 
+                    preshared_key = ?, 
+                    awg_params = ?,
+                    status = ?,
+                    deployed_at = NOW(),
+                    error_message = NULL
+                WHERE id = ?
+            ');
+
+            $stmt->execute([
+                $vpnPort,
+                $keys['public_key'],
+                $keys['preshared_key'],
+                json_encode($keys['awg_params']),
+                'active',
+                $this->serverId
+            ]);
+
+            // Reload data
+            $this->load();
+
+            return [
+                'success' => true,
+                'vpn_port' => $vpnPort,
+                'public_key' => $keys['public_key']
+            ];
+
+        } catch (Exception $e) {
+            // Update status to error
+            $pdo->prepare('UPDATE vpn_servers SET status = ?, error_message = ? WHERE id = ?')
+                ->execute(['error', $e->getMessage(), $this->serverId]);
+
+            throw $e;
+        }
+    }
+
+    /**
+     * Test SSH connection to server
+     */
+    public function testConnection(): bool
+    {
+        // Determine auth method
+        $sshOptions = '-o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -o ConnectTimeout=10';
+        $credentials = '';
+        $keyFile = '';
+        $passwordFile = '';
+
+        $target = Ssh::target((string) $this->data['username'], (string) $this->data['host']);
+        $port = Ssh::port($this->data['port']);
+
+        if (!empty($this->data['ssh_key'])) {
+            $keyFile = tempnam(sys_get_temp_dir(), 'sshkey');
+            file_put_contents($keyFile, self::normalizeSshKey($this->data['ssh_key']));
+            chmod($keyFile, 0600);
+            $sshOptions .= " -i {$keyFile} -o IdentitiesOnly=yes -o PubkeyAuthentication=yes -o PreferredAuthentications=publickey";
+            // sshpass is not needed for key-based auth
+            $testCommand = sprintf(
+                "ssh -p %d %s %s 'echo test' 2>/dev/null",
+                $port,
+                $sshOptions,
+                $target
+            );
+        } else {
+            $passwordFile = tempnam(sys_get_temp_dir(), 'sshpass-');
+            file_put_contents($passwordFile, (string) $this->data['password']);
+            chmod($passwordFile, 0600);
+            $sshOptions .= " -o PreferredAuthentications=password -o PubkeyAuthentication=no";
+            $testCommand = sprintf(
+                "sshpass -f %s ssh -p %d %s %s 'echo test' 2>/dev/null",
+                escapeshellarg($passwordFile),
+                $port,
+                $sshOptions,
+                $target
+            );
+        }
+
+        $result = shell_exec($testCommand);
+
+        if ($keyFile && file_exists($keyFile)) {
+            unlink($keyFile);
+        }
+        if ($passwordFile && file_exists($passwordFile)) {
+            unlink($passwordFile);
+        }
+
+        return trim($result) === 'test';
+    }
+
+    /**
+     * Execute command on remote server.
+     *
+     * @param string $command The command to execute
+     * @param bool|null $sudo True = use sudo, false = no sudo, null = auto-detect for docker commands
+     * @return string The command output
+     */
+    public function executeCommand(string $command, bool $sudo = null): string
+    {
+        $baseCommand = $command;
+        $pathPrefix = 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH; ';
+        $isDockerCommand = preg_match('/(^|\\n)docker(\\s|$)/', ltrim($baseCommand));
+        
+        // Auto-detect sudo requirement for docker commands when $sudo is null
+        if ($sudo === null && $isDockerCommand) {
+            $sudo = $this->detectDockerSudoRequirement();
+        }
+        
+        $escapedCommand = '';
+        $needsSudo = false;
+
+        // Determine auth method
+        $sshOptions = '-o LogLevel=ERROR -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no';
+        $keyFile = '';
+        $passwordFile = '';
+
+        $target = Ssh::target((string) $this->data['username'], (string) $this->data['host']);
+        $port = Ssh::port($this->data['port']);
+
+        if (!empty($this->data['ssh_key'])) {
+            $keyFile = tempnam(sys_get_temp_dir(), 'sshkey');
+            file_put_contents($keyFile, self::normalizeSshKey($this->data['ssh_key']));
+            chmod($keyFile, 0600);
+            $sshOptions .= " -i {$keyFile} -o IdentitiesOnly=yes -o PubkeyAuthentication=yes -o PreferredAuthentications=publickey";
+
+            $preparedCommand = $pathPrefix . $command;
+            $escapedCommand = escapeshellarg($preparedCommand);
+
+            $sshCommand = sprintf(
+                "ssh -p %d %s %s %s 2>&1",
+                $port,
+                $sshOptions,
+                $target,
+                $escapedCommand
+            );
+        } else {
+            $passwordFile = tempnam(sys_get_temp_dir(), 'sshpass-');
+            file_put_contents($passwordFile, (string) $this->data['password']);
+            chmod($passwordFile, 0600);
+            $needsSudo = ($sudo ?? false) && strtolower((string) ($this->data['username'] ?? '')) !== 'root';
+            if ($needsSudo) {
+                // Suppress sudo prompt text to keep command output machine-parseable.
+                $command = Ssh::sudo($command, (string) $this->data['password']);
+            }
+
+            $preparedCommand = $pathPrefix . $command;
+            $escapedCommand = escapeshellarg($preparedCommand);
+
+            $sshOptions .= " -o PreferredAuthentications=password -o PubkeyAuthentication=no";
+            $sshCommand = sprintf(
+                "sshpass -f %s ssh -p %d %s %s %s 2>&1",
+                escapeshellarg($passwordFile),
+                $port,
+                $sshOptions,
+                $target,
+                $escapedCommand
+            );
+        }
+
+        $output = shell_exec($sshCommand) ?? '';
+
+        // If sudo auth fails but user can run docker without sudo, retry docker commands directly.
+        if (
+            empty($this->data['ssh_key'])
+            && !empty($needsSudo)
+            && $isDockerCommand
+            && preg_match('/incorrect password attempts|sorry, try again|a password is required/i', $output)
+        ) {
+            // Update cache: this server doesn't need sudo for docker
+            if ($this->serverId !== null) {
+                self::$dockerSudoCache[$this->serverId] = false;
+            }
+            
+            $escapedBaseCommand = escapeshellarg($pathPrefix . $baseCommand);
+            $sshCommandNoSudo = sprintf(
+                "sshpass -f %s ssh -p %d %s %s %s 2>&1",
+                escapeshellarg($passwordFile),
+                $port,
+                $sshOptions,
+                $target,
+                $escapedBaseCommand
+            );
+            $output = shell_exec($sshCommandNoSudo) ?? '';
+        }
+
+        if ($keyFile && file_exists($keyFile)) {
+            unlink($keyFile);
+        }
+        if ($passwordFile && file_exists($passwordFile)) {
+            unlink($passwordFile);
+        }
+
+        return $output;
+    }
+
+    /**
+     * Detect whether docker commands require sudo on this server.
+     * Uses a simple test command to check if docker works without sudo.
+     * Results are cached per server instance.
+     *
+     * @return bool True if sudo is needed, false if docker works without sudo
+     */
+    private function detectDockerSudoRequirement(): bool
+    {
+        // Return cached result if available
+        if ($this->serverId !== null && array_key_exists($this->serverId, self::$dockerSudoCache)) {
+            return self::$dockerSudoCache[$this->serverId];
+        }
+
+        // Test if docker works without sudo using a simple version check
+        $testCmd = 'docker --version 2>&1';
+        $pathPrefix = 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH; ';
+        
+        $sshOptions = '-o LogLevel=ERROR -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no';
+        $keyFile = '';
+        $passwordFile = '';
+
+        $target = Ssh::target((string) $this->data['username'], (string) $this->data['host']);
+        $port = Ssh::port($this->data['port']);
+
+        if (!empty($this->data['ssh_key'])) {
+            $keyFile = tempnam(sys_get_temp_dir(), 'sshkey');
+            file_put_contents($keyFile, self::normalizeSshKey($this->data['ssh_key']));
+            chmod($keyFile, 0600);
+            $sshOptions .= " -i {$keyFile} -o IdentitiesOnly=yes -o PubkeyAuthentication=yes -o PreferredAuthentications=publickey";
+
+            $preparedCommand = $pathPrefix . $testCmd;
+            $escapedCommand = escapeshellarg($preparedCommand);
+
+            $sshCommand = sprintf(
+                "ssh -p %d %s %s %s 2>&1",
+                $port,
+                $sshOptions,
+                $target,
+                $escapedCommand
+            );
+        } else {
+            $passwordFile = tempnam(sys_get_temp_dir(), 'sshpass-');
+            file_put_contents($passwordFile, (string) $this->data['password']);
+            chmod($passwordFile, 0600);
+            // For password auth, first try without sudo
+            $preparedCommand = $pathPrefix . $testCmd;
+            $escapedCommand = escapeshellarg($preparedCommand);
+
+            $sshOptions .= " -o PreferredAuthentications=password -o PubkeyAuthentication=no";
+            $sshCommand = sprintf(
+                "sshpass -f %s ssh -p %d %s %s %s 2>&1",
+                escapeshellarg($passwordFile),
+                $port,
+                $sshOptions,
+                $target,
+                $escapedCommand
+            );
+        }
+
+        $output = shell_exec($sshCommand) ?? '';
+
+        if ($keyFile && file_exists($keyFile)) {
+            unlink($keyFile);
+        }
+        if ($passwordFile && file_exists($passwordFile)) {
+            unlink($passwordFile);
+        }
+
+        // Check if docker command succeeded (output contains "version")
+        $dockerWorks = stripos($output, 'version') !== false;
+        
+        // Cache the result
+        if ($this->serverId !== null) {
+            self::$dockerSudoCache[$this->serverId] = !$dockerWorks;
+        }
+
+        return !$dockerWorks;
+    }
+
+    /**
+     * Install Docker on remote server
+     */
+    private function installDocker(): void
+    {
+        $dockerVersion = $this->executeCommand('docker --version');
+        if (stripos($dockerVersion, 'version') !== false) {
+            return; // Docker already installed
+        }
+
+        $this->executeCommand('curl -fsSL https://get.docker.com | sh', true);
+        $this->executeCommand('systemctl enable --now docker', true);
+    }
+
+    /**
+     * Find free UDP port on remote server
+     */
+    private function findFreeUdpPort(): int
+    {
+        $min = 30000;
+        $max = 65000;
+
+        for ($attempt = 0; $attempt < 30; $attempt++) {
+            $candidate = random_int($min, $max);
+            $cmd = "ss -lun | awk '{print \$4}' | grep -E ':(" . $candidate . ")($| )' || true";
+            $out = $this->executeCommand($cmd, false);
+            if (trim($out) === '') {
+                return $candidate;
+            }
+        }
+
+        throw new Exception('Could not find free UDP port');
+    }
+
+    /**
+     * Create Dockerfile on remote server
+     */
+    private function createDockerfile(): void
+    {
+        $dockerfile = <<<'DOCKERFILE'
+FROM amneziavpn/amnezia-wg:latest
+
+LABEL maintainer="AmneziaVPN"
+
+RUN apk add --no-cache bash curl dumb-init
+RUN apk --update upgrade --no-cache
+
+RUN mkdir -p /opt/amnezia
+RUN echo -e "#!/bin/bash\ntail -f /dev/null" > /opt/amnezia/start.sh
+RUN chmod a+x /opt/amnezia/start.sh
+
+ENTRYPOINT [ "dumb-init", "/opt/amnezia/start.sh" ]
+CMD [ "" ]
+DOCKERFILE;
+
+        $this->executeCommand(
+            'echo ' . Ssh::remoteArg(base64_encode(trim($dockerfile)))
+            . ' | base64 -d > /opt/amnezia/amnezia-awg/Dockerfile',
+            true
+        );
+    }
+
+    /**
+     * Create start script on remote server
+     */
+    private function createStartScript(): void
+    {
+        $script = <<<'BASH'
+#!/bin/bash
+
+echo "Container startup"
+
+# Wait for config if not exists yet
+for i in {1..30}; do
+    if [ -f /opt/amnezia/awg/wg0.conf ]; then
+        break
+    fi
+    sleep 1
+done
+
+# Kill daemons in case of restart
+wg-quick down /opt/amnezia/awg/wg0.conf 2>/dev/null || true
+
+# Start daemons if configured
+if [ -f /opt/amnezia/awg/wg0.conf ]; then
+    wg-quick up /opt/amnezia/awg/wg0.conf
+    echo "WireGuard started"
+else
+    echo "No wg0.conf found, skipping WireGuard startup"
+fi
+
+# Allow traffic on the TUN interface
+iptables -A INPUT -i wg0 -j ACCEPT 2>/dev/null || true
+iptables -A FORWARD -i wg0 -j ACCEPT 2>/dev/null || true
+iptables -A OUTPUT -o wg0 -j ACCEPT 2>/dev/null || true
+
+# Allow forwarding traffic only from the VPN
+iptables -A FORWARD -i wg0 -o eth0 -s 10.8.1.0/24 -j ACCEPT 2>/dev/null || true
+iptables -A FORWARD -i wg0 -o eth1 -s 10.8.1.0/24 -j ACCEPT 2>/dev/null || true
+
+iptables -A FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
+
+iptables -t nat -A POSTROUTING -s 10.8.1.0/24 -o eth0 -j MASQUERADE 2>/dev/null || true
+iptables -t nat -A POSTROUTING -s 10.8.1.0/24 -o eth1 -j MASQUERADE 2>/dev/null || true
+
+tail -f /dev/null
+BASH;
+
+        $this->executeCommand(
+            'echo ' . Ssh::remoteArg(base64_encode(trim($script)))
+            . ' | base64 -d > /opt/amnezia/amnezia-awg/start.sh',
+            true
+        );
+        $this->executeCommand("chmod +x /opt/amnezia/amnezia-awg/start.sh", true);
+    }
+
+    /**
+     * Build Docker image
+     */
+    private function buildDockerImage(): void
+    {
+        $containerName = $this->data['container_name'];
+
+        // Cleanup old container/image
+        $this->executeCommand("docker stop {$containerName} 2>/dev/null || true", true);
+        $this->executeCommand("docker rm -fv {$containerName} 2>/dev/null || true", true);
+        $this->executeCommand("docker rmi {$containerName} 2>/dev/null || true", true);
+
+        // Build new image
+        $buildCmd = sprintf(
+            'docker build --no-cache --pull -t %s /opt/amnezia/amnezia-awg',
+            $containerName
+        );
+        $this->executeCommand($buildCmd, true);
+    }
+
+    /**
+     * Run Docker container
+     */
+    private function runContainer(int $vpnPort): void
+    {
+        $containerName = $this->data['container_name'];
+
+        $runCmd = sprintf(
+            'docker run -d --log-driver none --restart always --privileged --cap-add=NET_ADMIN --cap-add=SYS_MODULE -p %d:%d/udp -v /lib/modules:/lib/modules --name %s %s',
+            $vpnPort,
+            $vpnPort,
+            $containerName,
+            $containerName
+        );
+
+        $this->executeCommand($runCmd, true);
+        sleep(3); // Wait for container to start
+    }
+
+    /**
+     * Initialize server configuration with AWG parameters
+     */
+    private function initializeServerConfig(int $vpnPort): array
+    {
+        $containerName = $this->data['container_name'];
+
+        // Create directory
+        $this->executeCommand("docker exec -i {$containerName} mkdir -p /opt/amnezia/awg", true);
+
+        // Generate keys
+        $this->executeCommand("docker exec -i {$containerName} sh -c 'cd /opt/amnezia/awg && umask 077 && wg genkey | tee server_private.key | wg pubkey > wireguard_server_public_key.key'", true);
+        $this->executeCommand("docker exec -i {$containerName} sh -c 'cd /opt/amnezia/awg && wg genpsk > wireguard_psk.key'", true);
+        $this->executeCommand("docker exec -i {$containerName} chmod 600 /opt/amnezia/awg/server_private.key /opt/amnezia/awg/wireguard_psk.key /opt/amnezia/awg/wireguard_server_public_key.key", true);
+
+        // Get keys
+        $privKey = trim($this->executeCommand("docker exec -i {$containerName} cat /opt/amnezia/awg/server_private.key", true));
+        $pubKey = trim($this->executeCommand("docker exec -i {$containerName} cat /opt/amnezia/awg/wireguard_server_public_key.key", true));
+        $psk = trim($this->executeCommand("docker exec -i {$containerName} cat /opt/amnezia/awg/wireguard_psk.key", true));
+
+        // Generate AWG parameters
+        $awgParams = [
+            'Jc' => 3,
+            'Jmin' => 10,
+            'Jmax' => 50,
+            'S1' => rand(50, 250),
+            'S2' => rand(50, 250),
+            'H1' => rand(100000, 2000000000),
+            'H2' => rand(100000, 2000000000),
+            'H3' => rand(100000, 2000000000),
+            'H4' => rand(100000, 2000000000)
+        ];
+
+        // Create wg0.conf
+        $wgConfig = "[Interface]\n";
+        $wgConfig .= "PrivateKey = {$privKey}\n";
+        $wgConfig .= "Address = {$this->data['vpn_subnet']}\n";
+        $wgConfig .= "ListenPort = {$vpnPort}\n";
+        foreach ($awgParams as $key => $value) {
+            $wgConfig .= "{$key} = {$value}\n";
+        }
+        $wgConfig .= "\n";
+
+        $this->executeCommand(
+            'echo ' . Ssh::remoteArg(base64_encode($wgConfig))
+            . ' | base64 -d | docker exec -i ' . Ssh::remoteArg($containerName)
+            . ' tee /opt/amnezia/awg/wg0.conf > /dev/null',
+            true
+        );
+        $this->executeCommand("docker exec -i {$containerName} chmod 600 /opt/amnezia/awg/wg0.conf", true);
+
+        // Create clientsTable
+        $this->executeCommand("docker exec -i {$containerName} sh -c 'echo \"[]\" > /opt/amnezia/awg/clientsTable'", true);
+
+        // Start WireGuard
+        $this->executeCommand("docker exec -i {$containerName} wg-quick up /opt/amnezia/awg/wg0.conf 2>&1", true);
+
+        // Apply firewall rules
+        $this->executeCommand("docker exec -i {$containerName} sh -c 'iptables -A INPUT -i wg0 -j ACCEPT 2>/dev/null || true'", true);
+        $this->executeCommand("docker exec -i {$containerName} sh -c 'iptables -A FORWARD -i wg0 -j ACCEPT 2>/dev/null || true'", true);
+        $this->executeCommand("docker exec -i {$containerName} sh -c 'iptables -A OUTPUT -o wg0 -j ACCEPT 2>/dev/null || true'", true);
+        $this->executeCommand("docker exec -i {$containerName} sh -c 'iptables -A FORWARD -i wg0 -o eth0 -s 10.8.1.0/24 -j ACCEPT 2>/dev/null || true'", true);
+        $this->executeCommand("docker exec -i {$containerName} sh -c 'iptables -t nat -A POSTROUTING -s 10.8.1.0/24 -o eth0 -j MASQUERADE 2>/dev/null || true'", true);
+
+        // Ensure host-level forwarding/NAT for AWG subnet as well (required on some Docker host setups).
+        $vpnSubnet = (string) ($this->data['vpn_subnet'] ?? '10.8.1.0/24');
+        $vpnSubnetEsc = escapeshellarg($vpnSubnet);
+        $hostNatCmd = "bash -lc 'IFACE=\\$(ip route | awk \"{if (\\$1==\\\"default\\\") {print \\$5; exit}}\"); " .
+            "iptables -t nat -C POSTROUTING -s " . $vpnSubnetEsc . " -o \\\"\\$IFACE\\\" -j MASQUERADE 2>/dev/null || " .
+            "iptables -t nat -I POSTROUTING 1 -s " . $vpnSubnetEsc . " -o \\\"\\$IFACE\\\" -j MASQUERADE; " .
+            "iptables -C FORWARD -s " . $vpnSubnetEsc . " -o \\\"\\$IFACE\\\" -j ACCEPT 2>/dev/null || " .
+            "iptables -I FORWARD 1 -s " . $vpnSubnetEsc . " -o \\\"\\$IFACE\\\" -j ACCEPT; " .
+            "iptables -C FORWARD -d " . $vpnSubnetEsc . " -m conntrack --ctstate RELATED,ESTABLISHED -i \\\"\\$IFACE\\\" -j ACCEPT 2>/dev/null || " .
+            "iptables -I FORWARD 1 -d " . $vpnSubnetEsc . " -m conntrack --ctstate RELATED,ESTABLISHED -i \\\"\\$IFACE\\\" -j ACCEPT; " .
+            "sysctl -w net.ipv4.ip_forward=1 >/dev/null'";
+        $this->executeCommand($hostNatCmd, true);
+
+        sleep(2);
+
+        return [
+            'public_key' => $pubKey,
+            'preshared_key' => $psk,
+            'awg_params' => $awgParams
+        ];
+    }
+
+    /**
+     * Get server status from database
+     */
+    public function getStatus(): string
+    {
+        return $this->data['status'] ?? 'unknown';
+    }
+
+    /**
+     * Get all servers for a user
+     */
+    public static function listByUser(int $userId): array
+    {
+        $pdo = DB::conn();
+        $stmt = $pdo->prepare('SELECT * FROM vpn_servers WHERE user_id = ? ORDER BY created_at DESC');
+        $stmt->execute([$userId]);
+        return $stmt->fetchAll();
+    }
+
+    /**
+     * Get all servers (admin only)
+     */
+    public static function listAll(): array
+    {
+        $pdo = DB::conn();
+        $stmt = $pdo->query('SELECT s.*, u.email as user_email FROM vpn_servers s LEFT JOIN users u ON s.user_id = u.id ORDER BY s.created_at DESC');
+        return $stmt->fetchAll();
+    }
+
+    /**
+     * Delete server
+     */
+    public function delete(): bool
+    {
+        // Stop and remove container
+        try {
+            $containerName = $this->data['container_name'];
+            $this->executeCommand("docker stop {$containerName} 2>/dev/null || true", true);
+            $this->executeCommand("docker rm -fv {$containerName} 2>/dev/null || true", true);
+            $this->executeCommand("rm -rf /opt/amnezia/amnezia-awg", true);
+        } catch (Exception $e) {
+            // Ignore errors during cleanup
+        }
+
+        // Delete from database
+        $pdo = DB::conn();
+        $stmt = $pdo->prepare('DELETE FROM vpn_servers WHERE id = ?');
+        return $stmt->execute([$this->serverId]);
+    }
+
+    /**
+     * Get server data
+     */
+    public function getData(): ?array
+    {
+        return $this->data;
+    }
+
+    /**
+     * Create backup of server configuration and all clients
+     * 
+     * @param int $userId User who creates the backup
+     * @param string $backupType Type: 'manual' or 'automatic'
+     * @return int Backup ID
+     */
+    public function createBackup(int $userId, string $backupType = 'manual'): int
+    {
+        if (!$this->data) {
+            throw new Exception('Server not loaded');
+        }
+
+        $pdo = DB::conn();
+        $backupName = 'backup_' . $this->serverId . '_' . date('Y-m-d_His') . '.json';
+        $backupDir = '/var/www/html/backups';
+        $backupPath = $backupDir . '/' . $backupName;
+
+        // Create backups directory if not exists and ensure www-data can write
+        if (!is_dir($backupDir)) {
+            if (!@mkdir($backupDir, 0775, true)) {
+                throw new Exception('Cannot create backups directory: ' . $backupDir);
+            }
+        }
+
+        // Fix permissions if directory is not writable (e.g. created by root during install)
+        if (!is_writable($backupDir)) {
+            @chmod($backupDir, 0775);
+            // If still not writable, try shell chown (may work if running as root or via sudo)
+            if (!is_writable($backupDir)) {
+                @shell_exec('chown www-data:www-data ' . escapeshellarg($backupDir) . ' 2>/dev/null');
+                @chmod($backupDir, 0775);
+            }
+            if (!is_writable($backupDir)) {
+                throw new Exception('Backups directory is not writable by www-data. Run: chown www-data:www-data ' . $backupDir);
+            }
+        }
+
+        try {
+            // Get all clients for this server
+            $stmt = $pdo->prepare('
+                SELECT c.id, c.name, c.client_ip, c.public_key, c.private_key, c.preshared_key,
+                       c.config, c.status, c.expires_at, c.created_at, c.protocol_id,
+                       p.slug AS protocol_slug
+                FROM vpn_clients c
+                LEFT JOIN protocols p ON p.id = c.protocol_id
+                WHERE c.server_id = ?
+            ');
+            $stmt->execute([$this->serverId]);
+            $clients = $stmt->fetchAll();
+
+            $stmtProtocols = $pdo->prepare('SELECT p.slug, sp.config_data, sp.applied_at FROM server_protocols sp JOIN protocols p ON p.id = sp.protocol_id WHERE sp.server_id = ?');
+            $stmtProtocols->execute([$this->serverId]);
+            $serverProtocols = $stmtProtocols->fetchAll(PDO::FETCH_ASSOC);
+
+            // Prepare backup data
+            $backupData = [
+                'server' => [
+                    'name' => $this->data['name'],
+                    'host' => $this->data['host'],
+                    'port' => $this->data['port'],
+                    'vpn_port' => $this->data['vpn_port'],
+                    'vpn_subnet' => $this->data['vpn_subnet'],
+                    'container_name' => $this->data['container_name'],
+                    'install_protocol' => $this->data['install_protocol'] ?? null,
+                    'install_options' => $this->data['install_options'] ? json_decode($this->data['install_options'], true) : null,
+                    'server_public_key' => $this->data['server_public_key'],
+                    'preshared_key' => $this->data['preshared_key'],
+                    'awg_params' => $this->data['awg_params'],
+                ],
+                'server_protocols' => $serverProtocols,
+                'clients' => $clients,
+                'backup_date' => date('Y-m-d H:i:s'),
+                'version' => '1.0'
+            ];
+
+            // Write backup to file
+            $json = json_encode($backupData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+            file_put_contents($backupPath, $json);
+
+            $backupSize = filesize($backupPath);
+
+            // Insert backup record
+            $stmt = $pdo->prepare('
+                INSERT INTO server_backups 
+                (server_id, backup_name, backup_path, backup_size, clients_count, backup_type, status, created_by) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ');
+
+            $stmt->execute([
+                $this->serverId,
+                $backupName,
+                $backupPath,
+                $backupSize,
+                count($clients),
+                $backupType,
+                'completed',
+                $userId
+            ]);
+
+            return (int) $pdo->lastInsertId();
+
+        } catch (Exception $e) {
+            // Mark backup as failed
+            if (isset($stmt)) {
+                $stmt = $pdo->prepare('
+                    INSERT INTO server_backups 
+                    (server_id, backup_name, backup_path, backup_type, status, error_message, created_by) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                ');
+
+                $stmt->execute([
+                    $this->serverId,
+                    $backupName,
+                    $backupPath,
+                    $backupType,
+                    'failed',
+                    $e->getMessage(),
+                    $userId
+                ]);
+            }
+
+            throw $e;
+        }
+    }
+
+    /**
+     * List all backups for this server
+     * 
+     * @return array List of backups
+     */
+    public function listBackups(): array
+    {
+        if (!$this->data) {
+            throw new Exception('Server not loaded');
+        }
+
+        $pdo = DB::conn();
+        $stmt = $pdo->prepare('
+            SELECT b.*, u.name as created_by_name, u.email as created_by_email
+            FROM server_backups b
+            LEFT JOIN users u ON b.created_by = u.id
+            WHERE b.server_id = ?
+            ORDER BY b.created_at DESC
+        ');
+        $stmt->execute([$this->serverId]);
+        return $stmt->fetchAll();
+    }
+
+    /**
+     * Restore server from backup
+     * Note: This only restores client configurations to database
+     * Server must already be deployed
+     * 
+     * @param int $backupId Backup ID
+     * @return array Restoration results
+     */
+    public function restoreBackup(int $backupId): array
+    {
+        if (!$this->data) {
+            throw new Exception('Server not loaded');
+        }
+
+        if ($this->data['status'] !== 'active') {
+            throw new Exception('Server must be active to restore backup');
+        }
+
+        $pdo = DB::conn();
+
+        // Get backup record
+        $stmt = $pdo->prepare('SELECT * FROM server_backups WHERE id = ? AND server_id = ?');
+        $stmt->execute([$backupId, $this->serverId]);
+        $backup = $stmt->fetch();
+
+        if (!$backup) {
+            throw new Exception('Backup not found');
+        }
+
+        if (!file_exists($backup['backup_path'])) {
+            throw new Exception('Backup file not found');
+        }
+
+        // Read backup data
+        $backupData = json_decode(file_get_contents($backup['backup_path']), true);
+
+        if (!$backupData || !isset($backupData['clients'])) {
+            throw new Exception('Invalid backup format');
+        }
+
+        $restored = 0;
+        $failed = 0;
+        $errors = [];
+
+        foreach ($backupData['clients'] as $clientData) {
+            try {
+                // Check if client already exists by IP
+                $stmt = $pdo->prepare('SELECT id FROM vpn_clients WHERE server_id = ? AND client_ip = ?');
+                $stmt->execute([$this->serverId, $clientData['client_ip']]);
+                $existing = $stmt->fetch();
+
+                if ($existing) {
+                    $errors[] = "Client {$clientData['name']} already exists";
+                    $failed++;
+                    continue;
+                }
+
+                $slug = trim((string) ($clientData['protocol_slug'] ?? $backupData['server']['install_protocol'] ?? $this->data['install_protocol'] ?? ''));
+                $protocolId = 0;
+                if ($slug !== '') {
+                    $findProtocol = $pdo->prepare('SELECT id FROM protocols WHERE slug = ? LIMIT 1');
+                    $findProtocol->execute([$slug]);
+                    $protocolId = (int) $findProtocol->fetchColumn();
+                }
+                $targetServerData = $protocolId > 0
+                    ? VpnClient::resolveProtocolServerData($this, $protocolId)
+                    : $this->data;
+
+                // Insert client
+                $stmt = $pdo->prepare('
+                    INSERT INTO vpn_clients 
+                    (server_id, user_id, protocol_id, name, client_ip, public_key, private_key, preshared_key,
+                     config, status, expires_at) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ');
+
+                $stmt->execute([
+                    $this->serverId,
+                    $this->data['user_id'],
+                    $protocolId > 0 ? $protocolId : null,
+                    $clientData['name'],
+                    $clientData['client_ip'],
+                    $clientData['public_key'],
+                    $clientData['private_key'],
+                    $clientData['preshared_key'],
+                    $clientData['config'],
+                    'disabled', // Restore as disabled for safety
+                    $clientData['expires_at']
+                ]);
+
+                // Backups restore clients disabled for safety, so do not create a live
+                // peer that later delete/revoke would reasonably assume is absent.
+
+                $restored++;
+
+            } catch (Exception $e) {
+                $failed++;
+                $errors[] = "Failed to restore {$clientData['name']}: " . $e->getMessage();
+            }
+        }
+
+        return [
+            'success' => true, // Always success if process completed
+            'restored' => $restored,
+            'failed' => $failed,
+            'total' => count($backupData['clients']),
+            'errors' => $errors,
+            'message' => $restored > 0 ? "Restored $restored clients" : "No clients restored"
+        ];
+    }
+
+    /**
+     * Delete backup
+     * 
+     * @param int $backupId Backup ID
+     * @return bool Success
+     */
+    public static function deleteBackup(int $backupId): bool
+    {
+        $pdo = DB::conn();
+
+        // Get backup path
+        $stmt = $pdo->prepare('SELECT backup_path FROM server_backups WHERE id = ?');
+        $stmt->execute([$backupId]);
+        $backup = $stmt->fetch();
+
+        if (!$backup) {
+            return false;
+        }
+
+        // Delete file
+        if (file_exists($backup['backup_path'])) {
+            unlink($backup['backup_path']);
+        }
+
+        // Delete record
+        $stmt = $pdo->prepare('DELETE FROM server_backups WHERE id = ?');
+        return $stmt->execute([$backupId]);
+    }
+
+    /**
+     * Get backup by ID
+     * 
+     * @param int $backupId Backup ID
+     * @return array|null Backup data
+     */
+    public static function getBackup(int $backupId): ?array
+    {
+        $pdo = DB::conn();
+        $stmt = $pdo->prepare('SELECT * FROM server_backups WHERE id = ?');
+        $stmt->execute([$backupId]);
+        return $stmt->fetch() ?: null;
+    }
+
+    /**
+     * Discover and synchronize all existing clients from VPS container (clientsTable & wg config)
+     */
+    public static function syncClientsFromRemoteServer(int $serverId): array
+    {
+        try {
+            $serverModel = new self($serverId);
+            $serverData = $serverModel->getData();
+            if (!$serverData) {
+                throw new Exception('Сервер не найден');
+            }
+
+            $pdo = DB::conn();
+            $imported = 0;
+            $updated = 0;
+
+            // 1. Get all running/existing docker containers on the VPS
+            $rawContainers = (string) $serverModel->executeCommand("docker ps -a --format '{{.Names}}' 2>/dev/null", true);
+            $discoveredContainers = array_values(array_filter(array_map('trim', preg_split('/\r?\n/', $rawContainers) ?: []), static function ($v) {
+                return $v !== '';
+            }));
+
+            $containerNames = array_unique(array_filter(array_merge(
+                [$serverData['container_name'] ?? null],
+                $discoveredContainers,
+                ['amnezia-awg', 'amnezia-awg2', 'amnezia-awg31', 'amnezia-wireguard', 'amnezia-xray']
+            )));
+
+            // 2. Read all clientsTable files from host & containers
+            $nameByPub = [];
+            $nameByIp = [];
+
+            // Read from host /opt/amnezia
+            $hostTablesRaw = (string) $serverModel->executeCommand("find /opt/amnezia -name '*clientsTable*' -exec cat {} + 2>/dev/null || true", true);
+            if (trim($hostTablesRaw) !== '') {
+                // Parse potential concatenated JSON arrays
+                preg_match_all('/\[\s*\{.*?\}\s*\]/s', $hostTablesRaw, $jsonMatches);
+                $tableChunks = !empty($jsonMatches[0]) ? $jsonMatches[0] : [$hostTablesRaw];
+                foreach ($tableChunks as $chunk) {
+                    $arr = json_decode(trim($chunk), true);
+                    if (is_array($arr)) {
+                        foreach ($arr as $entry) {
+                            $cid = trim((string)($entry['clientId'] ?? $entry['publicKey'] ?? ''));
+                            $uname = trim((string)($entry['userData']['clientName'] ?? $entry['clientName'] ?? $entry['name'] ?? ''));
+                            $uip = trim((string)($entry['userData']['clientIp'] ?? $entry['clientIp'] ?? $entry['ip'] ?? ''));
+                            if ($uname !== '') $uname = Translator::fixMojibake($uname);
+                            if ($cid !== '' && $uname !== '') $nameByPub[$cid] = $uname;
+                            if ($uip !== '' && $uname !== '') $nameByIp[$uip] = $uname;
+                        }
+                    }
+                }
+            }
+
+            // 3. For each container, read live peers & configs
+            foreach ($containerNames as $containerName) {
+                $containerArg = Ssh::remoteArg($containerName);
+
+                // Try to read container clientsTable
+                $containerTableRaw = $serverModel->executeCommand("docker exec -i {$containerArg} cat /opt/amnezia/awg/clientsTable 2>/dev/null || docker exec -i {$containerArg} cat /opt/amnezia/awg2/clientsTable 2>/dev/null || docker exec -i {$containerArg} cat /etc/wireguard/clientsTable 2>/dev/null || true", true);
+                $table = json_decode(trim($containerTableRaw), true);
+                if (is_array($table)) {
+                    foreach ($table as $entry) {
+                        $cid = trim((string)($entry['clientId'] ?? $entry['publicKey'] ?? ''));
+                        $uname = trim((string)($entry['userData']['clientName'] ?? $entry['clientName'] ?? $entry['name'] ?? ''));
+                        $uip = trim((string)($entry['userData']['clientIp'] ?? $entry['clientIp'] ?? $entry['ip'] ?? ''));
+                        if ($uname !== '') $uname = Translator::fixMojibake($uname);
+                        if ($cid !== '' && $uname !== '') $nameByPub[$cid] = $uname;
+                        if ($uip !== '' && $uname !== '') $nameByIp[$uip] = $uname;
+                    }
+                }
+
+                // Try to read live wg / awg dump
+                $dumpRaw = $serverModel->executeCommand("docker exec -i {$containerArg} awg show all dump 2>/dev/null || docker exec -i {$containerArg} wg show all dump 2>/dev/null || true", true);
+                if (trim($dumpRaw) !== '') {
+                    $lines = preg_split('/\r?\n/', trim($dumpRaw)) ?: [];
+                    foreach ($lines as $line) {
+                        $parts = preg_split('/\t+|\s+/', trim($line));
+                        // Format: interface peer-pubkey preshared-key endpoint allowed-ips latest-handshake rx tx keepalive
+                        if (count($parts) >= 5 && preg_match('#^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$#', $parts[1])) {
+                            $pub = $parts[1];
+                            $psk = ($parts[2] !== '(none)' && $parts[2] !== '') ? $parts[2] : null;
+                            $allowed = $parts[4];
+                            $clientIp = null;
+                            if (preg_match('/^([0-9\.]+)(?:\/32)?$/', $allowed, $mm)) {
+                                $clientIp = $mm[1];
+                            }
+                            if (!$clientIp) continue;
+
+                            $stmt = $pdo->prepare('SELECT id, name, public_key FROM vpn_clients WHERE server_id = ? AND (client_ip = ? OR public_key = ?)');
+                            $stmt->execute([$serverId, $clientIp, $pub]);
+                            $existing = $stmt->fetch();
+
+                            $resolvedName = $nameByPub[$pub] ?? ($nameByIp[$clientIp] ?? null);
+
+                            if ($existing) {
+                                $curName = $existing['name'];
+                                if ($resolvedName && ($curName === $clientIp || $curName === '10.8.1.1' || str_starts_with($curName, 'import-') || str_contains($curName, $clientIp) || str_starts_with($curName, 'Клиент '))) {
+                                    $upd = $pdo->prepare('UPDATE vpn_clients SET name = ?, public_key = IF(public_key IS NULL OR public_key = "", ?, public_key) WHERE id = ?');
+                                    $upd->execute([$resolvedName, $pub, $existing['id']]);
+                                    $updated++;
+                                }
+                                continue;
+                            }
+
+                            $clientName = $resolvedName ?: ('Клиент ' . $clientIp);
+                            $ins = $pdo->prepare('
+                                INSERT INTO vpn_clients 
+                                (server_id, user_id, name, client_ip, public_key, private_key, preshared_key, config, status, created_at)
+                                VALUES (?, ?, ?, ?, ?, "", ?, "", "active", NOW())
+                            ');
+                            $ins->execute([
+                                $serverId,
+                                $serverData['user_id'] ?? null,
+                                $clientName,
+                                $clientIp,
+                                $pub,
+                                $psk
+                            ]);
+                            $imported++;
+                        }
+                    }
+                }
+
+                // Also parse .conf files
+                $wgConfig = $serverModel->executeCommand("docker exec -i {$containerArg} cat /opt/amnezia/awg/awg0.conf 2>/dev/null || docker exec -i {$containerArg} cat /opt/amnezia/awg/wg0.conf 2>/dev/null || docker exec -i {$containerArg} cat /etc/wireguard/wg0.conf 2>/dev/null || true", true);
+
+                if (trim($wgConfig) !== '' && strpos($wgConfig, '[Interface]') !== false) {
+                    $pattern = '/\[Peer\][^\[]*?PublicKey\s*=\s*(.+?)\s*[\r\n]+[\s\S]*?AllowedIPs\s*=\s*(.+?)(?:\r?\n|$)/';
+                    if (preg_match_all($pattern, $wgConfig, $matches, PREG_SET_ORDER)) {
+                        foreach ($matches as $m) {
+                            $pub = trim($m[1]);
+                            $allowed = trim($m[2]);
+                            $clientIp = null;
+                            foreach (explode(',', $allowed) as $ipSpec) {
+                                $ipSpec = trim($ipSpec);
+                                if (preg_match('/^([0-9\.]+)\/32$/', $ipSpec, $mm)) {
+                                    $clientIp = $mm[1];
+                                    break;
+                                }
+                            }
+                            if (!$clientIp) continue;
+
+                            $stmt = $pdo->prepare('SELECT id, name, public_key FROM vpn_clients WHERE server_id = ? AND (client_ip = ? OR public_key = ?)');
+                            $stmt->execute([$serverId, $clientIp, $pub]);
+                            $existing = $stmt->fetch();
+
+                            $resolvedName = $nameByPub[$pub] ?? ($nameByIp[$clientIp] ?? null);
+
+                            if ($existing) {
+                                $curName = $existing['name'];
+                                if ($resolvedName && ($curName === $clientIp || $curName === '10.8.1.1' || str_starts_with($curName, 'import-') || str_contains($curName, $clientIp) || str_starts_with($curName, 'Клиент '))) {
+                                    $upd = $pdo->prepare('UPDATE vpn_clients SET name = ?, public_key = IF(public_key IS NULL OR public_key = "", ?, public_key) WHERE id = ?');
+                                    $upd->execute([$resolvedName, $pub, $existing['id']]);
+                                    $updated++;
+                                }
+                                continue;
+                            }
+
+                            $clientName = $resolvedName ?: ('Клиент ' . $clientIp);
+                            $ins = $pdo->prepare('
+                                INSERT INTO vpn_clients 
+                                (server_id, user_id, name, client_ip, public_key, private_key, preshared_key, config, status, created_at)
+                                VALUES (?, ?, ?, ?, ?, "", "", "", "active", NOW())
+                            ');
+                            $ins->execute([
+                                $serverId,
+                                $serverData['user_id'] ?? null,
+                                $clientName,
+                                $clientIp,
+                                $pub
+                            ]);
+                            $imported++;
+                        }
+                    }
+                }
+            }
+
+            return [
+                'success' => true,
+                'imported' => $imported,
+                'updated' => $updated,
+                'message' => "Синхронизация завершена. Найдено новых клиентов: {$imported}, обновлено: {$updated}"
+            ];
+        } catch (Throwable $e) {
+            return [
+                'success' => false,
+                'imported' => 0,
+                'updated' => 0,
+                'error' => $e->getMessage()
+            ];
+        }
+    }
+}

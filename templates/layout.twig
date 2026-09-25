@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}{{ app_name }}{% endblock %}</title>
+    
+    <!-- Google Fonts (Inter & JetBrains Mono for Cyrillic support) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    
+    <!-- Tailwind CSS with custom configuration -->
+    <script>
+        tailwind = {
+            config: {
+                darkMode: 'class',
+                theme: {
+                    extend: {
+                        fontFamily: {
+                            sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+                            mono: ['JetBrains Mono', 'monospace'],
+                        },
+                        colors: {
+                            brand: {
+                                50: '#eef2ff',
+                                100: '#e0e7ff',
+                                200: '#c7d2fe',
+                                500: '#6366f1',
+                                600: '#4f46e5',
+                                700: '#4338ca',
+                                800: '#3730a3',
+                                900: '#312e81',
+                                950: '#0f172a'
+                            }
+                        },
+                        boxShadow: {
+                            'soft': '0 4px 20px -2px rgba(0, 0, 0, 0.05)',
+                            'glow': '0 0 25px -5px rgba(99, 102, 241, 0.3)',
+                        }
+                    }
+                }
+            }
+        };
+    </script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    {% block styles %}{% endblock %}
+    <style>
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+        .gradient-bg {
+            background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 60%, #312e81 100%);
+        }
+        .brand-gradient {
+            background: linear-gradient(135deg, #4f46e5 0%, #6366f1 50%, #8b5cf6 100%);
+        }
+        .glass-card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(226, 232, 240, 0.8);
+        }
+        .mobile-menu {
+            display: none;
+        }
+        .mobile-menu.active {
+            display: block;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col antialiased">
+    {% if user %}
+    <!-- Navigation -->
+    <nav class="gradient-bg border-b border-indigo-950/40 shadow-xl sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center">
+                    <a href="/dashboard" class="flex-shrink-0 flex items-center group transition">
+                        <div class="w-10 h-10 rounded-xl brand-gradient flex items-center justify-center shadow-lg shadow-indigo-500/30 group-hover:scale-105 transition-transform duration-200 mr-3">
+                            <i class="fas fa-shield-alt text-white text-lg"></i>
+                        </div>
+                        <div class="flex flex-col">
+                            <span class="text-white text-lg font-bold tracking-tight leading-tight">{{ app_name }}</span>
+                            <span class="text-xs text-indigo-300 font-medium tracking-wide">Панель управления</span>
+                        </div>
+                    </a>
+
+                    <!-- Desktop Menu -->
+                    <div class="hidden md:ml-10 md:flex md:space-x-2">
+                        <a href="/dashboard" class="text-slate-200 hover:text-white hover:bg-white/10 inline-flex items-center px-3.5 py-2 rounded-lg text-sm font-medium transition duration-150">
+                            <i class="fas fa-tachometer-alt mr-2 text-indigo-400"></i>{{ t('menu.dashboard') }}
+                        </a>
+                        <a href="/servers" class="text-slate-200 hover:text-white hover:bg-white/10 inline-flex items-center px-3.5 py-2 rounded-lg text-sm font-medium transition duration-150">
+                            <i class="fas fa-server mr-2 text-indigo-400"></i>{{ t('menu.servers') }}
+                        </a>
+                        {% if user.role == 'admin' %}
+                        <a href="/settings" class="text-slate-200 hover:text-white hover:bg-white/10 inline-flex items-center px-3.5 py-2 rounded-lg text-sm font-medium transition duration-150">
+                            <i class="fas fa-cog mr-2 text-indigo-400"></i>{{ t('menu.settings') }}
+                        </a>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <div class="flex items-center space-x-3">
+                    <!-- User Menu (Desktop) -->
+                    <div class="hidden md:flex items-center pl-4 border-l border-white/10 space-x-4">
+                        <div class="flex items-center bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-slate-200">
+                            <div class="w-6 h-6 rounded-full bg-indigo-500/20 text-indigo-300 flex items-center justify-center text-xs mr-2 font-semibold">
+                                <i class="fas fa-user"></i>
+                            </div>
+                            <span class="font-medium text-slate-100">{{ user.name }}</span>
+                            {% if user.role == 'admin' %}
+                            <span class="ml-2 px-1.5 py-0.5 text-[10px] font-semibold bg-indigo-500/30 text-indigo-200 rounded border border-indigo-400/30">Админ</span>
+                            {% endif %}
+                        </div>
+                        <a href="/logout" class="text-slate-300 hover:text-rose-400 hover:bg-rose-500/10 px-3 py-1.5 rounded-lg text-sm font-medium transition duration-150 flex items-center">
+                            <i class="fas fa-sign-out-alt mr-1.5"></i>{{ t('menu.logout') }}
+                        </a>
+                    </div>
+
+                    <!-- Mobile menu button -->
+                    <div class="md:hidden flex items-center">
+                        <button onclick="toggleMobileMenu()" type="button" class="text-slate-300 hover:text-white hover:bg-white/10 p-2 rounded-lg focus:outline-none">
+                            <i class="fas fa-bars text-xl"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Mobile Menu -->
+        <div id="mobileMenu" class="mobile-menu md:hidden bg-slate-900/95 border-b border-white/10 backdrop-blur-md">
+            <div class="px-4 pt-3 pb-4 space-y-2">
+                <a href="/dashboard" class="text-slate-200 hover:bg-indigo-600/30 hover:text-white flex items-center px-3 py-2.5 rounded-lg text-base font-medium">
+                    <i class="fas fa-tachometer-alt mr-3 text-indigo-400 w-5 text-center"></i>{{ t('menu.dashboard') }}
+                </a>
+                <a href="/servers" class="text-slate-200 hover:bg-indigo-600/30 hover:text-white flex items-center px-3 py-2.5 rounded-lg text-base font-medium">
+                    <i class="fas fa-server mr-3 text-indigo-400 w-5 text-center"></i>{{ t('menu.servers') }}
+                </a>
+                {% if user.role == 'admin' %}
+                <a href="/settings" class="text-slate-200 hover:bg-indigo-600/30 hover:text-white flex items-center px-3 py-2.5 rounded-lg text-base font-medium">
+                    <i class="fas fa-cog mr-3 text-indigo-400 w-5 text-center"></i>{{ t('menu.settings') }}
+                </a>
+                {% endif %}
+                <div class="border-t border-white/10 my-2 pt-2"></div>
+                <div class="text-slate-300 px-3 py-2 text-sm flex items-center">
+                    <i class="fas fa-user-circle mr-2 text-indigo-400 text-lg"></i>
+                    <span class="font-medium text-white">{{ user.name }}</span>
+                    {% if user.role == 'admin' %}
+                    <span class="ml-2 px-1.5 py-0.5 text-xs bg-indigo-500/30 text-indigo-200 rounded">Админ</span>
+                    {% endif %}
+                </div>
+                <a href="/logout" class="text-rose-300 hover:bg-rose-500/20 hover:text-rose-200 flex items-center px-3 py-2.5 rounded-lg text-base font-medium">
+                    <i class="fas fa-sign-out-alt mr-3 w-5 text-center"></i>{{ t('menu.logout') }}
+                </a>
+            </div>
+        </div>
+    </nav>
+    {% endif %}
+
+    <!-- Main Content -->
+    <main class="flex-grow {% if user %}py-8{% endif %}">
+        {% block content %}{% endblock %}
+    </main>
+
+    <!-- Custom Confirmation Modal -->
+    <div id="confirmModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm hidden overflow-y-auto h-full w-full z-[9999] flex items-center justify-center p-4" style="display:none;">
+        <div class="relative max-w-md w-full bg-white rounded-2xl shadow-2xl border border-slate-200/80 p-6 overflow-hidden">
+            <div class="text-center">
+                <div class="mx-auto flex items-center justify-center h-14 w-14 rounded-2xl bg-rose-50 text-rose-600 mb-4 border border-rose-100">
+                    <i class="fas fa-exclamation-triangle text-2xl"></i>
+                </div>
+                <h3 class="text-lg font-bold text-slate-900" id="confirmModalTitle">Подтверждение</h3>
+                <div class="mt-2 px-4 py-2">
+                    <p class="text-sm text-slate-600" id="confirmModalMessage">Вы уверены?</p>
+                </div>
+                <div class="mt-6 flex justify-center gap-3">
+                    <button id="confirmModalCancel" class="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-semibold rounded-xl transition duration-150 focus:outline-none focus:ring-2 focus:ring-slate-300">
+                        Отмена
+                    </button>
+                    <button id="confirmModalOk" class="px-5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white text-sm font-semibold rounded-xl shadow-lg shadow-rose-600/20 transition duration-150 focus:outline-none focus:ring-2 focus:ring-rose-500">
+                        Подтвердить
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="bg-white border-t border-slate-200/80 mt-auto">
+        <div class="max-w-7xl mx-auto py-5 px-4 sm:px-6 lg:px-8">
+            <div class="flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500">
+                <div class="flex items-center gap-2">
+                    <span class="font-semibold text-slate-700">{{ app_name }}</span>
+                    <span>&bull;</span>
+                    <span>Панель управления VPN серверами</span>
+                </div>
+                <div>
+                    <span>&copy; {{ "now"|date("Y") }} Все права защищены</span>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        function toggleMobileMenu() {
+            const menu = document.getElementById('mobileMenu');
+            menu.classList.toggle('active');
+        }
+
+        // Custom confirmation modal function (replaces native confirm)
+        window.showConfirmModal = function(message, title) {
+            return new Promise((resolve) => {
+                const modal = document.getElementById('confirmModal');
+                const titleEl = document.getElementById('confirmModalTitle');
+                const msgEl = document.getElementById('confirmModalMessage');
+                const okBtn = document.getElementById('confirmModalOk');
+                const cancelBtn = document.getElementById('confirmModalCancel');
+                
+                if (!modal) {
+                    resolve(confirm(message));
+                    return;
+                }
+                
+                titleEl.textContent = title || 'Подтверждение';
+                msgEl.textContent = message || 'Вы уверены?';
+                
+                modal.style.display = 'flex';
+                modal.classList.remove('hidden');
+                
+                function cleanup() {
+                    modal.style.display = 'none';
+                    modal.classList.add('hidden');
+                    okBtn.removeEventListener('click', onOk);
+                    cancelBtn.removeEventListener('click', onCancel);
+                    modal.removeEventListener('click', onBackdrop);
+                }
+                
+                function onOk() {
+                    cleanup();
+                    resolve(true);
+                }
+                
+                function onCancel() {
+                    cleanup();
+                    resolve(false);
+                }
+                
+                function onBackdrop(e) {
+                    if (e.target === modal) {
+                        cleanup();
+                        resolve(false);
+                    }
+                }
+                
+                okBtn.addEventListener('click', onOk);
+                cancelBtn.addEventListener('click', onCancel);
+                modal.addEventListener('click', onBackdrop);
+            });
+        };
+    </script>
+
+    {% block scripts %}{% endblock %}
+</body>
+</html>

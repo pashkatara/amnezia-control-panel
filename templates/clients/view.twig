@@ -1,0 +1,424 @@
+{% extends "layout.twig" %}
+{% block title %}Клиент: {{ client.name }} — {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
+  <!-- Header -->
+  <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-2 border-b border-slate-200">
+    <div class="flex items-center gap-3">
+      <a href="/servers/{{ client.server_id }}" class="w-10 h-10 rounded-xl bg-white border border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-50 flex items-center justify-center transition shadow-sm">
+        <i class="fas fa-arrow-left"></i>
+      </a>
+      <div>
+        <div class="flex items-center gap-2.5">
+          <h1 class="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight">{{ client.name }}</h1>
+          {% if client.status == 'active' %}
+            <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 text-xs font-semibold rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+              {{ t('status.active') }}
+            </span>
+          {% else %}
+            <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 text-xs font-semibold rounded-full bg-rose-50 text-rose-700 border border-rose-200">
+              <span class="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
+              {{ t('status.disabled') }}
+            </span>
+          {% endif %}
+        </div>
+        <p class="text-xs sm:text-sm font-mono text-slate-500">IP: {{ client.client_ip }}</p>
+      </div>
+    </div>
+
+    <div class="flex items-center gap-2">
+      <a href="/clients/{{ client.id }}/download" class="inline-flex items-center px-4 py-2.5 rounded-xl shadow-lg shadow-indigo-500/20 text-xs font-semibold text-white brand-gradient hover:opacity-95 transition">
+        <i class="fas fa-download mr-1.5"></i> Скачать конфиг
+      </a>
+      {% if client.status == 'active' %}
+        <form method="POST" action="/clients/{{ client.id }}/revoke" class="inline">
+          <button type="button" class="inline-flex items-center px-3.5 py-2.5 rounded-xl text-xs font-semibold text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 transition" onclick="async()=>{ if(await showConfirmModal('Приостановить доступ клиенту {{ client.name }}?', 'Ограничение доступа')) this.closest('form').submit(); }">
+            <i class="fas fa-ban mr-1.5"></i> Отозвать
+          </button>
+        </form>
+      {% else %}
+        <form method="POST" action="/clients/{{ client.id }}/restore" class="inline">
+          <button type="submit" class="inline-flex items-center px-3.5 py-2.5 rounded-xl text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 transition">
+            <i class="fas fa-check mr-1.5"></i> Восстановить
+          </button>
+        </form>
+      {% endif %}
+    </div>
+  </div>
+  
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+    <!-- Config Info Card -->
+    <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6 space-y-4">
+      <h3 class="text-base font-bold text-slate-900 flex items-center gap-2 pb-2 border-b border-slate-100">
+        <i class="fas fa-sliders-h text-indigo-600"></i>
+        {{ t('clients.configuration')|default('Конфигурация клиента') }}
+      </h3>
+      <dl class="space-y-3 text-sm">
+        <div class="flex justify-between items-center py-1 border-b border-slate-50">
+          <dt class="text-slate-500">IP адрес</dt>
+          <dd class="font-mono font-semibold text-slate-800">{{ client.client_ip }}</dd>
+        </div>
+        <div class="flex justify-between items-center py-1 border-b border-slate-50">
+          <dt class="text-slate-500">Статус</dt>
+          <dd>
+            {% if client.status == 'active' %}
+              <span class="px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded text-xs font-semibold">{{ t('status.active') }}</span>
+            {% else %}
+              <span class="px-2 py-0.5 bg-rose-50 text-rose-700 rounded text-xs font-semibold">{{ t('status.disabled') }}</span>
+            {% endif %}
+          </dd>
+        </div>
+        <div class="flex justify-between items-center py-1 border-b border-slate-50">
+          <dt class="text-slate-500">Логин</dt>
+          <dd class="font-mono text-slate-800">{{ client.name|default('') }}</dd>
+        </div>
+        <div class="flex justify-between items-center py-1">
+          <dt class="text-slate-500">Дата создания</dt>
+          <dd class="text-slate-800 text-xs">{{ client.created_at }}</dd>
+        </div>
+      </dl>
+    </div>
+    
+    <!-- Traffic Stats Card -->
+    <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6 space-y-4">
+      <div class="flex justify-between items-center pb-2 border-b border-slate-100">
+        <h3 class="text-base font-bold text-slate-900 flex items-center gap-2">
+          <i class="fas fa-chart-pie text-indigo-600"></i>
+          {{ t('clients.traffic_stats')|default('Статистика трафика') }}
+        </h3>
+        <button onclick="syncStats({{ client.id }})" class="inline-flex items-center text-xs font-semibold text-indigo-600 hover:text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded-lg transition">
+          <i class="fas fa-sync-alt mr-1"></i> Обновить
+        </button>
+      </div>
+      <dl class="space-y-3 text-sm" id="stats">
+        <div class="flex justify-between items-center py-1 border-b border-slate-50">
+          <dt class="text-slate-500">Отправлено (Upload)</dt>
+          <dd class="font-mono font-semibold text-slate-800" id="stat-sent">{{ (client.bytes_sent|default(0) / 1048576)|number_format(2) }} MB</dd>
+        </div>
+        <div class="flex justify-between items-center py-1 border-b border-slate-50">
+          <dt class="text-slate-500">Получено (Download)</dt>
+          <dd class="font-mono font-semibold text-slate-800" id="stat-received">{{ (client.bytes_received|default(0) / 1048576)|number_format(2) }} MB</dd>
+        </div>
+        <div class="flex justify-between items-center py-1 border-b border-slate-50">
+          <dt class="text-slate-500">Суммарный трафик</dt>
+          <dd class="font-mono font-bold text-indigo-600" id="stat-total">{{ ((client.bytes_sent|default(0) + client.bytes_received|default(0)) / 1048576)|number_format(2) }} MB</dd>
+        </div>
+        <div class="flex justify-between items-center py-1">
+          <dt class="text-slate-500">{{ t('clients.last_handshake') }}</dt>
+          <dd class="text-xs text-slate-800" id="stat-last-seen">
+            {% if client.last_handshake %}
+              {{ client.last_handshake }}
+            {% else %}
+              <span class="text-slate-400">Никогда не подключался</span>
+            {% endif %}
+          </dd>
+        </div>
+      </dl>
+    </div>
+  </div>
+  
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+    <!-- Expiration Form -->
+    <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6 space-y-4">
+      <h3 class="text-base font-bold text-slate-900 flex items-center gap-2 pb-2 border-b border-slate-100">
+        <i class="fas fa-hourglass-half text-indigo-600"></i>
+        {{ t('clients.expiration') }}
+      </h3>
+      <form onsubmit="updateExpiration(event, {{ client.id }})" class="space-y-4">
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1.5">Продлить или изменить срок</label>
+          <select id="expirationSelect" class="block w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition mb-2" onchange="toggleExpirationEdit()">
+            <option value="" selected disabled>-- Выберите вариант из списка --</option>
+            <option value="never">{{ t('clients.never_expires') }}</option>
+            <option value="7">7 {{ t('common.days') }}</option>
+            <option value="30">30 {{ t('common.days') }}</option>
+            <option value="60">60 {{ t('common.days') }}</option>
+            <option value="90">90 {{ t('common.days') }}</option>
+            <option value="180">180 {{ t('common.days') }}</option>
+            <option value="365">365 {{ t('common.days') }}</option>
+            <option value="custom">{{ t('clients.custom_seconds') }}</option>
+          </select>
+          <input type="number" id="expirationSeconds" class="block w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition" placeholder="{{ t('clients.enter_seconds') }}" style="display:none;" min="1">
+        </div>
+        <div class="p-3.5 bg-indigo-50/60 border border-indigo-100 rounded-xl">
+          <div class="text-[11px] text-indigo-600 font-bold uppercase tracking-wider mb-0.5">Текущее значение:</div>
+          <div class="text-xs text-indigo-950 font-medium" id="currentExpiration">
+            {% if client.expires_at %}
+              {% set expires_ts = client.expires_at|date('U') %}
+              {% set now_ts = "now"|date('U') %}
+              {% set diff_days = ((expires_ts - now_ts) / 86400)|round %}
+              {{ client.expires_at|date('Y-m-d H:i:s') }} (осталось {{ diff_days }} {{ t('common.days') }})
+            {% else %}
+              {{ t('clients.never_expires') }}
+            {% endif %}
+          </div>
+        </div>
+        <button type="submit" class="w-full inline-flex justify-center items-center py-2.5 px-4 rounded-xl text-sm font-semibold text-white brand-gradient hover:opacity-95 shadow-sm transition">
+          <i class="fas fa-save mr-2"></i> {{ t('form.update') }}
+        </button>
+      </form>
+    </div>
+    
+    <!-- Traffic Limit Form -->
+    <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6 space-y-4">
+      <h3 class="text-base font-bold text-slate-900 flex items-center gap-2 pb-2 border-b border-slate-100">
+        <i class="fas fa-tachometer-alt text-indigo-600"></i>
+        {{ t('clients.traffic_limit') }}
+      </h3>
+      <form onsubmit="updateTrafficLimit(event, {{ client.id }})" class="space-y-4">
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1.5">Установить лимит трафика</label>
+          <select id="trafficSelect" class="block w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition mb-2" onchange="toggleTrafficEdit()">
+            <option value="" selected disabled>-- Выберите лимит из списка --</option>
+            <option value="unlimited">{{ t('clients.unlimited') }}</option>
+            <option value="1">1 GB</option>
+            <option value="5">5 GB</option>
+            <option value="10">10 GB</option>
+            <option value="25">25 GB</option>
+            <option value="50">50 GB</option>
+            <option value="100">100 GB</option>
+            <option value="250">250 GB</option>
+            <option value="500">500 GB</option>
+            <option value="1000">1000 GB (1 TB)</option>
+            <option value="custom">{{ t('clients.custom_mb') }}</option>
+          </select>
+          <input type="number" id="trafficMegabytes" class="block w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition" placeholder="{{ t('clients.enter_megabytes') }}" style="display:none;" min="1">
+        </div>
+        <div class="p-3.5 bg-indigo-50/60 border border-indigo-100 rounded-xl">
+          <div class="text-[11px] text-indigo-600 font-bold uppercase tracking-wider mb-0.5">Текущий лимит:</div>
+          <div class="text-xs text-indigo-950 font-medium" id="currentTrafficLimit">
+            {% if client.traffic_limit %}
+              {% set limit_gb = (client.traffic_limit / 1073741824)|number_format(2) %}
+              {% set total_traffic = (client.bytes_sent|default(0) + client.bytes_received|default(0)) %}
+              {% set used_gb = (total_traffic / 1073741824)|number_format(2) %}
+              {{ limit_gb }} GB (использовано: {{ used_gb }} GB)
+            {% else %}
+              {{ t('clients.unlimited') }}
+            {% endif %}
+          </div>
+        </div>
+        <button type="submit" class="w-full inline-flex justify-center items-center py-2.5 px-4 rounded-xl text-sm font-semibold text-white brand-gradient hover:opacity-95 shadow-sm transition">
+          <i class="fas fa-save mr-2"></i> {{ t('form.update') }}
+        </button>
+      </form>
+    </div>
+  </div>
+  
+  <!-- QR Code Section -->
+  {% if client.qr_code %}
+  <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6 sm:p-8 text-center space-y-4">
+    <h3 class="text-lg font-bold text-slate-900">
+      {% if is_awg_family_export %}Конфигурация AWG (QR-код){% else %}QR-код для подключения{% endif %}
+    </h3>
+    <div class="inline-block p-4 bg-white border border-slate-200 rounded-2xl shadow-sm">
+      <img src="{{ client.qr_code }}" alt="QR code" class="mx-auto rounded-lg" style="width: 100%; max-width: 320px; max-height: 50vh; height: auto; object-fit: contain; image-rendering: pixelated;">
+    </div>
+    <p class="text-xs sm:text-sm text-slate-500">Отсканируйте этот QR-код в приложении Amnezia VPN на телефоне или ПК</p>
+    <div>
+      <a href="{{ client.qr_code }}" download="client-config-qr.png" class="inline-flex items-center text-xs font-semibold text-indigo-600 hover:text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg transition">
+        <i class="fas fa-download mr-1.5"></i> Скачать изображение QR
+      </a>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Multi-part QR code for AWG -->
+  {% if is_awg_family_export and qr_code_vpn_parts %}
+  <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6 sm:p-8 text-center space-y-4">
+    <h3 class="text-lg font-bold text-slate-900">Полное подключение Amnezia (составной QR)</h3>
+    <p class="text-xs sm:text-sm text-slate-500">Сканируйте каждую часть по порядку в приложении Amnezia VPN</p>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
+      {% for qr_part in qr_code_vpn_parts %}
+        <div class="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-2">
+          <p class="text-xs font-bold text-slate-700">Часть {{ loop.index }} из {{ loop.length }}</p>
+          <img src="{{ qr_part }}" alt="QR part {{ loop.index }}" class="mx-auto rounded-lg bg-white p-2 border border-slate-200" style="width: 100%; max-width: 280px; max-height: 40vh; height: auto; object-fit: contain; image-rendering: pixelated;">
+          <div>
+            <a href="{{ qr_part }}" download="amnezia-connection-part-{{ loop.index }}.png" class="inline-flex items-center text-xs font-semibold text-indigo-600 hover:text-indigo-700">
+              <i class="fas fa-download mr-1"></i> Скачать часть {{ loop.index }}
+            </a>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- VPN URL config -->
+  {% if is_awg_family_export and vpn_url_config %}
+  <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6 space-y-3">
+    <h3 class="text-base font-bold text-slate-900 flex items-center gap-2">
+      <i class="fas fa-link text-indigo-600"></i>
+      VPN URL Конфигурация
+    </h3>
+    <div class="bg-slate-900 p-4 rounded-xl text-left overflow-x-auto border border-slate-800">
+      <code class="text-xs font-mono text-emerald-400 break-all select-all">{{ vpn_url_config }}</code>
+    </div>
+    <p class="text-xs text-slate-500">Скопируйте эту строку vpn:// для быстрого импорта в клиент Amnezia</p>
+  </div>
+  {% endif %}
+
+  {% if protocol_output and client.show_text_content %}
+  <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6 space-y-3">
+    <h3 class="text-base font-bold text-slate-900 flex items-center gap-2">
+      <i class="fas fa-file-alt text-indigo-600"></i>
+      {{ t('clients.connection_instructions')|default('Инструкция по подключению') }}
+    </h3>
+    <pre class="bg-slate-50 p-4 rounded-xl text-xs font-mono text-slate-800 border border-slate-200 overflow-x-auto leading-relaxed" style="white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;">{{ protocol_output }}</pre>
+  </div>
+  {% endif %}
+</div>
+
+<script>
+function toggleExpirationEdit() {
+  const select = document.getElementById('expirationSelect');
+  const input = document.getElementById('expirationSeconds');
+  if (select.value === 'custom') {
+    input.style.display = 'block';
+    input.required = true;
+    input.focus();
+  } else {
+    input.style.display = 'none';
+    input.required = false;
+    input.value = '';
+  }
+}
+
+function toggleTrafficEdit() {
+  const select = document.getElementById('trafficSelect');
+  const input = document.getElementById('trafficMegabytes');
+  if (select.value === 'custom') {
+    input.style.display = 'block';
+    input.required = true;
+    input.focus();
+  } else {
+    input.style.display = 'none';
+    input.required = false;
+    input.value = '';
+  }
+}
+
+async function updateExpiration(event, clientId) {
+  event.preventDefault();
+  
+  const select = document.getElementById('expirationSelect');
+  const customInput = document.getElementById('expirationSeconds');
+  
+  let expiresAt = null;
+  let displayText = '{{ t("clients.never_expires") }}';
+  
+  if (select.value === 'custom' && customInput.value) {
+    const seconds = parseInt(customInput.value);
+    const date = new Date(Date.now() + seconds * 1000);
+    expiresAt = date.toISOString().slice(0, 19).replace('T', ' ');
+    const days = Math.round(seconds / 86400);
+    displayText = `${expiresAt} (${days} {{ t("common.days") }})`;
+  } else if (select.value === 'never') {
+    expiresAt = null;
+    displayText = '{{ t("clients.never_expires") }}';
+  } else if (select.value && select.value !== 'custom' && select.value !== '') {
+    const days = parseInt(select.value);
+    const date = new Date(Date.now() + days * 86400 * 1000);
+    expiresAt = date.toISOString().slice(0, 19).replace('T', ' ');
+    displayText = `${expiresAt} (${days} {{ t("common.days") }})`;
+  } else {
+    alert('Пожалуйста, выберите вариант из списка');
+    return;
+  }
+  
+  try {
+    const response = await fetch(`/clients/${clientId}/set-expiration`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ expires_at: expiresAt })
+    });
+    
+    const data = await response.json();
+    
+    if (response.ok && data.success === true) {
+      document.getElementById('currentExpiration').textContent = displayText;
+      select.value = '';
+      customInput.value = '';
+      customInput.style.display = 'none';
+    } else {
+      alert('Ошибка: ' + (data.error || 'Неизвестная ошибка'));
+    }
+  } catch (error) {
+    alert('Ошибка: ' + error.message);
+  }
+}
+
+async function updateTrafficLimit(event, clientId) {
+  event.preventDefault();
+  
+  const select = document.getElementById('trafficSelect');
+  const customInput = document.getElementById('trafficMegabytes');
+  
+  let limitBytes = null;
+  let displayText = '{{ t("clients.unlimited") }}';
+  
+  if (select.value === 'custom' && customInput.value) {
+    limitBytes = parseInt(customInput.value) * 1048576;
+    const limitGb = (limitBytes / 1073741824).toFixed(2);
+    displayText = `${limitGb} GB`;
+  } else if (select.value === 'unlimited') {
+    limitBytes = null;
+    displayText = '{{ t("clients.unlimited") }}';
+  } else if (select.value && select.value !== 'custom' && select.value !== '') {
+    limitBytes = parseFloat(select.value) * 1073741824;
+    displayText = `${parseFloat(select.value).toFixed(2)} GB`;
+  } else {
+    alert('Пожалуйста, выберите вариант из списка');
+    return;
+  }
+  
+  try {
+    const response = await fetch(`/clients/${clientId}/set-traffic-limit`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ traffic_limit: limitBytes })
+    });
+    
+    const data = await response.json();
+    
+    if (response.ok && data.success === true) {
+      window.location.reload();
+    } else {
+      alert('Ошибка: ' + (data.error || 'Неизвестная ошибка'));
+    }
+  } catch (error) {
+    alert('Ошибка: ' + error.message);
+  }
+}
+
+async function syncStats(clientId) {
+  try {
+    const response = await fetch(`/clients/${clientId}/sync-stats`, {
+      method: 'POST'
+    });
+    
+    const data = await response.json();
+    
+    if (data.success && data.stats) {
+      document.getElementById('stat-sent').textContent = data.stats.sent;
+      document.getElementById('stat-received').textContent = data.stats.received;
+      document.getElementById('stat-total').textContent = data.stats.total;
+      document.getElementById('stat-last-seen').innerHTML = data.stats.is_online 
+        ? '<span class="text-emerald-600 font-medium"><i class="fas fa-circle text-[10px] mr-1"></i> ' + data.stats.last_seen + '</span>'
+        : data.stats.last_seen;
+    } else {
+      alert('Не удалось синхронизировать статистику: ' + (data.error || 'Неизвестная ошибка'));
+    }
+  } catch (error) {
+    alert('Ошибка: ' + error.message);
+  }
+}
+</script>
+{% endblock %}

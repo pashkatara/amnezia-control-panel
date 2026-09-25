@@ -1,0 +1,336 @@
+{% extends "layout.twig" %}
+{% block title %}Добавить сервер — {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
+  <div class="flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <a href="/servers" class="w-10 h-10 rounded-xl bg-white border border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-50 flex items-center justify-center transition shadow-sm">
+        <i class="fas fa-arrow-left"></i>
+      </a>
+      <div>
+        <h1 class="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight">Добавить новый сервер</h1>
+        <p class="text-xs sm:text-sm text-slate-500">Настройка подключения и развертывание протокола VPN</p>
+      </div>
+    </div>
+  </div>
+
+  {% if info_message %}
+    <div class="bg-indigo-50 border border-indigo-200 text-indigo-900 px-4 py-3.5 rounded-xl text-sm flex items-start gap-3 shadow-sm">
+      <i class="fas fa-info-circle text-indigo-600 mt-0.5 text-base"></i>
+      <div>
+        <span class="font-semibold">{{ info_message }}</span>
+      </div>
+    </div>
+  {% endif %}
+
+  {% if error %}
+    <div class="bg-rose-50 border border-rose-200 text-rose-800 px-4 py-3.5 rounded-xl text-sm flex items-start gap-3 shadow-sm">
+      <i class="fas fa-exclamation-circle text-rose-500 mt-0.5 text-base"></i>
+      <div>
+        <span class="font-medium">Ошибка:</span> {{ error }}
+      </div>
+    </div>
+  {% endif %}
+
+  <form method="POST" enctype="multipart/form-data" class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6 sm:p-8 space-y-6">
+    <!-- Creation Mode -->
+    <div>
+      <label class="block text-sm font-semibold text-slate-700 mb-2">{{ t('servers.creation_mode')|default('Способ добавления сервера') }}</label>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <label class="relative flex items-center p-3.5 border rounded-xl cursor-pointer hover:bg-slate-50 transition select-none">
+          <input type="radio" name="creation_mode" value="manual" class="text-indigo-600 focus:ring-indigo-500 h-4 w-4" {% if selected_mode|default('manual') == 'manual' %}checked{% endif %}>
+          <div class="ml-3">
+            <span class="block text-sm font-semibold text-slate-800">{{ t('servers.creation_mode_manual')|default('Ручная настройка (SSH)') }}</span>
+            <span class="block text-xs text-slate-400">Прямое подключение по SSH</span>
+          </div>
+        </label>
+        <label class="relative flex items-center p-3.5 border rounded-xl cursor-pointer hover:bg-slate-50 transition select-none">
+          <input type="radio" name="creation_mode" value="backup" class="text-indigo-600 focus:ring-indigo-500 h-4 w-4" {% if selected_mode == 'backup' %}checked{% endif %}>
+          <div class="ml-3">
+            <span class="block text-sm font-semibold text-slate-800">{{ t('servers.creation_mode_backup')|default('Импорт из бэкапа') }}</span>
+            <span class="block text-xs text-slate-400">Файл Amnezia или панели</span>
+          </div>
+        </label>
+      </div>
+    </div>
+
+    <!-- Manual Section -->
+    <div id="manualSection" class="space-y-5 pt-2">
+      <div>
+        <label class="block text-sm font-semibold text-slate-700 mb-1.5">Имя сервера</label>
+        <input name="name" data-field-manual required class="block w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 placeholder-slate-400 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 focus:bg-white transition" placeholder="Мой VPN Сервер" value="{{ form_data.name ?? '' }}">
+      </div>
+
+      <div>
+        <label class="block text-sm font-semibold text-slate-700 mb-1.5">Протокол для установки</label>
+        {% set selectedProtocol = form_data.install_protocol ?? default_protocol %}
+        <select name="install_protocol" data-field-manual class="block w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 focus:bg-white transition">
+          {% for protocol in protocols %}
+            <option value="{{ protocol.slug }}" {% if protocol.slug == selectedProtocol %}selected{% endif %}>{{ protocol.name }}</option>
+          {% endfor %}
+        </select>
+        <p id="protocolDescription" class="mt-1.5 text-xs text-slate-500"></p>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div class="sm:col-span-2">
+          <label class="block text-sm font-semibold text-slate-700 mb-1.5">IP адрес или домен</label>
+          <input name="host" data-field-manual required class="block w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 font-mono text-sm placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 focus:bg-white transition" placeholder="192.0.2.1" value="{{ form_data.host ?? '' }}">
+        </div>
+        <div>
+          <label class="block text-sm font-semibold text-slate-700 mb-1.5">SSH Порт</label>
+          <input name="port" data-field-manual type="number" value="{{ form_data.port ?? 22 }}" class="block w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 focus:bg-white transition">
+        </div>
+      </div>
+
+      <div>
+        <label class="block text-sm font-semibold text-slate-700 mb-1.5">SSH Пользователь</label>
+        <input name="username" data-field-manual value="{{ form_data.username ?? 'root' }}" class="block w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 focus:bg-white transition">
+      </div>
+
+      <div class="space-y-4 pt-2 border-t border-slate-100">
+        <div>
+          <label class="block text-sm font-semibold text-slate-700 mb-2">Способ аутентификации SSH</label>
+          <div class="flex items-center gap-6">
+            <label class="inline-flex items-center cursor-pointer">
+              <input type="radio" name="auth_method" value="password" class="text-indigo-600 focus:ring-indigo-500" checked onchange="toggleAuthMethod()">
+              <span class="ml-2 text-sm text-slate-700 font-medium">Пароль</span>
+            </label>
+            <label class="inline-flex items-center cursor-pointer">
+              <input type="radio" name="auth_method" value="ssh_key" class="text-indigo-600 focus:ring-indigo-500" onchange="toggleAuthMethod()">
+              <span class="ml-2 text-sm text-slate-700 font-medium">SSH Ключ (Private Key)</span>
+            </label>
+          </div>
+        </div>
+
+        <div id="authPassword">
+          <label class="block text-sm font-semibold text-slate-700 mb-1.5">SSH Пароль</label>
+          <input name="password" data-field-manual type="password" class="block w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 focus:bg-white transition" placeholder="••••••••">
+        </div>
+
+        <div id="authSshKey" style="display: none;">
+          <label class="block text-sm font-semibold text-slate-700 mb-1.5">Приватный SSH ключ</label>
+          <textarea name="ssh_key" data-field-manual rows="5" class="block w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl font-mono text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 focus:bg-white transition" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----..."></textarea>
+          <p class="mt-1.5 text-xs text-slate-500">Вставьте приватный ключ сервера в формате OpenSSH или PEM</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Backup Section -->
+    <div id="backupSection" class="space-y-5 pt-2" style="display: none;">
+      <input type="hidden" name="backup_token" id="backupTokenInput" value="{{ form_data.backup_token ?? '' }}">
+
+      <div>
+        <label class="block text-sm font-semibold text-slate-700 mb-1.5">{{ t('servers.backup_upload_type')|default('Тип файла резервной копии') }}</label>
+        <select name="backup_upload_type" class="block w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 focus:bg-white transition" data-field-backup>
+          <option value="auto" {% if form_data.backup_upload_type|default('auto') == 'auto' %}selected{% endif %}>{{ t('servers.backup_type_auto')|default('Автоопределение формата') }}</option>
+          <option value="amnezia_app" {% if form_data.backup_upload_type|default('auto') == 'amnezia_app' %}selected{% endif %}>{{ t('servers.backup_type_amnezia')|default('Бэкап приложения Amnezia (.backup)') }}</option>
+          <option value="panel_backup" {% if form_data.backup_upload_type|default('auto') == 'panel_backup' %}selected{% endif %}>{{ t('servers.backup_type_panel')|default('Бэкап веб-панели (.json)') }}</option>
+        </select>
+      </div>
+
+      <div>
+        <label class="block text-sm font-semibold text-slate-700 mb-1.5">{{ t('servers.upload_backup_file')|default('Файл резервной копии') }}</label>
+        <input type="file" name="backup_upload" id="backupFileInput" accept=".backup,.json" class="block w-full px-3.5 py-2 bg-slate-50 border border-slate-300 rounded-xl text-slate-700 text-sm file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer" data-field-backup>
+        <p class="mt-1.5 text-xs text-slate-500">{{ t('servers.backup_upload_hint')|default('Поддерживаются файлы конфигурации и бэкапы Amnezia VPN') }}</p>
+      </div>
+
+      <!-- Dynamic Preview or Server Selection List -->
+      <div id="backupServersContainer" class="{% if not (form_data.uploaded_servers is defined and form_data.uploaded_servers) %}hidden{% endif %} border-t border-slate-100 pt-5 space-y-3">
+        <label class="block text-sm font-bold text-slate-800 flex items-center gap-2">
+          <i class="fas fa-server text-indigo-600"></i>
+          {{ t('servers.backup_server_entry')|default('Выберите конфигурацию для добавления') }}
+        </label>
+        <div id="backupServersList" class="space-y-2.5">
+          {% if form_data.uploaded_servers is defined and form_data.uploaded_servers %}
+            {% for server in form_data.uploaded_servers %}
+              {% set option_host = server.host is defined and server.host is not empty ? server.host : t('common.na')|default('н/д') %}
+              {% set option_clients = server.client_count is defined ? server.client_count : t('common.na')|default('н/д') %}
+              <label class="relative flex items-center justify-between p-4 border rounded-2xl cursor-pointer hover:bg-slate-50 hover:border-indigo-300 transition select-none bg-white shadow-sm">
+                <div class="flex items-center gap-3">
+                  <input type="radio" name="backup_server_index" value="{{ server.index }}" class="text-indigo-600 focus:ring-indigo-500 h-4 w-4" {% if loop.first or form_data.backup_server_index|default('') == (server.index ~ '') %}checked{% endif %} data-field-backup>
+                  <div>
+                    <span class="block text-sm font-bold text-slate-900">{{ server.label }}</span>
+                    <div class="flex items-center gap-2 mt-0.5 text-xs text-slate-500">
+                      <span class="font-mono">{{ option_host }}</span>
+                      <span>&bull;</span>
+                      <span>Клиентов: {{ option_clients }}</span>
+                    </div>
+                  </div>
+                </div>
+                <span class="px-2.5 py-1 text-xs font-semibold bg-indigo-50 text-indigo-700 rounded-lg border border-indigo-100">
+                  Выбрать
+                </span>
+              </label>
+            {% endfor %}
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="pt-4 border-t border-slate-100 flex items-center justify-end gap-3">
+      <a href="/servers" class="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-semibold rounded-xl transition">
+        Отмена
+      </a>
+      <button type="submit" class="inline-flex items-center px-6 py-2.5 rounded-xl shadow-lg shadow-indigo-500/25 text-sm font-semibold text-white brand-gradient hover:opacity-95 transition">
+        <i class="fas fa-save mr-2"></i>Создать и развернуть
+      </button>
+    </div>
+  </form>
+</div>
+
+<script>
+const modeRadios = Array.prototype.slice.call(document.querySelectorAll('input[name="creation_mode"]'));
+const manualSection = document.getElementById('manualSection');
+const backupSection = document.getElementById('backupSection');
+const manualFields = Array.prototype.slice.call(document.querySelectorAll('[data-field-manual]'));
+const backupFields = Array.prototype.slice.call(document.querySelectorAll('[data-field-backup]'));
+const initialMode = {{ selected_mode|default('manual')|json_encode|raw }};
+
+function setFieldsState(mode) {
+  manualFields.forEach(el => {
+    if (!el) return;
+    el.disabled = mode !== 'manual';
+  });
+  backupFields.forEach(el => {
+    if (!el) return;
+    el.disabled = mode !== 'backup';
+  });
+}
+
+function switchMode() {
+  const selectedRadio = document.querySelector('input[name="creation_mode"]:checked');
+  const mode = selectedRadio ? selectedRadio.value : 'manual';
+  if (manualSection) {
+    manualSection.style.display = mode === 'manual' ? 'block' : 'none';
+  }
+  if (backupSection) {
+    backupSection.style.display = mode === 'backup' ? 'block' : 'none';
+  }
+  setFieldsState(mode);
+}
+
+modeRadios.forEach(function (radio) {
+  radio.addEventListener('change', switchMode);
+});
+
+const initialModeRadio = document.querySelector(`input[name="creation_mode"][value="${initialMode}"]`);
+if (initialModeRadio) {
+    initialModeRadio.checked = true;
+}
+switchMode();
+
+{% set protocol_map = {} %}
+{% for protocol in protocols %}
+  {% set protocol_map = protocol_map | merge({ (protocol.slug): (protocol.description ?? '') }) %}
+{% endfor %}
+const protocolDescriptions = {{ protocol_map | json_encode | raw }};
+const protocolDescriptionEl = document.getElementById('protocolDescription');
+const protocolSelect = document.querySelector('select[name="install_protocol"]');
+
+function updateProtocolDescription() {
+  if (!protocolSelect || !protocolDescriptionEl) return;
+  const description = protocolDescriptions[protocolSelect.value] || '';
+  protocolDescriptionEl.textContent = description;
+  protocolDescriptionEl.style.display = description ? 'block' : 'none';
+}
+
+function toggleAuthMethod() {
+  const method = document.querySelector('input[name="auth_method"]:checked').value;
+  const passwordSection = document.getElementById('authPassword');
+  const keySection = document.getElementById('authSshKey');
+  const passwordInput = passwordSection.querySelector('input');
+  const keyInput = keySection.querySelector('textarea');
+
+  if (method === 'password') {
+    passwordSection.style.display = 'block';
+    keySection.style.display = 'none';
+    passwordInput.required = true;
+    keyInput.required = false;
+    keyInput.value = '';
+  } else {
+    passwordSection.style.display = 'none';
+    keySection.style.display = 'block';
+    passwordInput.required = false;
+    passwordInput.value = '';
+    keyInput.required = true;
+  }
+}
+
+if (protocolSelect) {
+  protocolSelect.addEventListener('change', updateProtocolDescription);
+  updateProtocolDescription();
+}
+
+toggleAuthMethod();
+
+// Real-time client-side backup preview and selection
+const backupFileInput = document.getElementById('backupFileInput');
+const backupServersContainer = document.getElementById('backupServersContainer');
+const backupServersList = document.getElementById('backupServersList');
+
+if (backupFileInput) {
+  backupFileInput.addEventListener('change', function() {
+    const file = this.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      try {
+        const json = JSON.parse(e.target.result);
+        let servers = [];
+        if (json['Servers/serversList']) {
+          const list = typeof json['Servers/serversList'] === 'string' ? JSON.parse(json['Servers/serversList']) : json['Servers/serversList'];
+          let idx = 0;
+          list.forEach(s => {
+            const host = s.hostName || '';
+            const desc = s.description || host || 'Сервер';
+            const containers = s.containers || [];
+            containers.forEach(c => {
+              if (c.awg || c.wireguard || c.xray || c.openvpn || c.shadowsocks) {
+                const proto = c.awg ? (c.awg.protocol_version ? 'AWG ' + c.awg.protocol_version : 'AWG') : (c.container || 'VPN');
+                servers.push({
+                  index: idx++,
+                  label: `${desc} (${host}) — ${proto}`,
+                  host: host,
+                  client_count: c.awg && c.awg.last_config ? 1 : 0
+                });
+              }
+            });
+          });
+        }
+        
+        if (servers.length > 0) {
+          backupServersList.innerHTML = '';
+          servers.forEach((srv, i) => {
+            const card = document.createElement('label');
+            card.className = 'relative flex items-center justify-between p-4 border rounded-2xl cursor-pointer hover:bg-slate-50 hover:border-indigo-300 transition select-none bg-white shadow-sm';
+            card.innerHTML = `
+              <div class="flex items-center gap-3">
+                <input type="radio" name="backup_server_index" value="${srv.index}" class="text-indigo-600 focus:ring-indigo-500 h-4 w-4" ${i === 0 ? 'checked' : ''} data-field-backup>
+                <div>
+                  <span class="block text-sm font-bold text-slate-900">${srv.label}</span>
+                  <div class="flex items-center gap-2 mt-0.5 text-xs text-slate-500">
+                    <span class="font-mono">${srv.host || 'Хост не указан'}</span>
+                    <span>&bull;</span>
+                    <span>Конфигурация #${srv.index + 1}</span>
+                  </div>
+                </div>
+              </div>
+              <span class="px-2.5 py-1 text-xs font-semibold bg-indigo-50 text-indigo-700 rounded-lg border border-indigo-100">
+                Выбрать
+              </span>
+            `;
+            backupServersList.appendChild(card);
+          });
+          backupServersContainer.classList.remove('hidden');
+        }
+      } catch (err) {
+        // Fallback to server-side parser
+      }
+    };
+    reader.readAsText(file);
+  });
+}
+</script>
+{% endblock %}

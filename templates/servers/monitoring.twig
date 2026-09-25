@@ -1,0 +1,359 @@
+{% extends "layout.twig" %}
+
+{% block title %}Мониторинг {{ server.name }} — {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
+    <!-- Header -->
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-2 border-b border-slate-200">
+        <div class="flex items-center gap-3">
+            <a href="/servers/{{ server.id }}" class="w-10 h-10 rounded-xl bg-white border border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-50 flex items-center justify-center transition shadow-sm">
+                <i class="fas fa-arrow-left"></i>
+            </a>
+            <div>
+                <h1 class="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight flex items-center gap-2.5">
+                    <i class="fas fa-chart-line text-indigo-600"></i>
+                    Мониторинг: {{ server.name }}
+                </h1>
+                <p class="text-xs sm:text-sm text-slate-500 font-mono">{{ server.host }}</p>
+            </div>
+        </div>
+        
+        <div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-indigo-50 border border-indigo-100 text-xs font-medium text-indigo-700">
+            <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            Автообновление каждые 30 сек
+        </div>
+    </div>
+    
+    <!-- Metrics Grid -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <!-- CPU Card -->
+        <div class="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-sm space-y-4">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <div class="w-8 h-8 rounded-lg bg-rose-50 text-rose-600 flex items-center justify-center text-sm">
+                        <i class="fas fa-microchip"></i>
+                    </div>
+                    <span class="font-bold text-slate-800 text-sm">Загрузка CPU</span>
+                </div>
+                <span class="text-sm font-bold font-mono text-slate-900 px-2.5 py-1 bg-slate-50 rounded-lg border border-slate-100" id="cpu-current">--</span>
+            </div>
+            <div class="h-60 relative">
+                <canvas id="cpu-chart"></canvas>
+            </div>
+        </div>
+        
+        <!-- RAM Card -->
+        <div class="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-sm space-y-4">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <div class="w-8 h-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center text-sm">
+                        <i class="fas fa-memory"></i>
+                    </div>
+                    <span class="font-bold text-slate-800 text-sm">Использование RAM</span>
+                </div>
+                <span class="text-sm font-bold font-mono text-slate-900 px-2.5 py-1 bg-slate-50 rounded-lg border border-slate-100" id="ram-current">--</span>
+            </div>
+            <div class="h-60 relative">
+                <canvas id="ram-chart"></canvas>
+            </div>
+        </div>
+        
+        <!-- Disk Card -->
+        <div class="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-sm space-y-4">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <div class="w-8 h-8 rounded-lg bg-sky-50 text-sky-600 flex items-center justify-center text-sm">
+                        <i class="fas fa-hdd"></i>
+                    </div>
+                    <span class="font-bold text-slate-800 text-sm">Использование диска</span>
+                </div>
+                <span class="text-sm font-bold font-mono text-slate-900 px-2.5 py-1 bg-slate-50 rounded-lg border border-slate-100" id="disk-current">--</span>
+            </div>
+            <div class="h-60 relative">
+                <canvas id="disk-chart"></canvas>
+            </div>
+        </div>
+        
+        <!-- Network Card -->
+        <div class="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-sm space-y-4">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <div class="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center text-sm">
+                        <i class="fas fa-network-wired"></i>
+                    </div>
+                    <span class="font-bold text-slate-800 text-sm">Скорость сети</span>
+                </div>
+                <span class="text-sm font-bold font-mono text-slate-900 px-2.5 py-1 bg-slate-50 rounded-lg border border-slate-100" id="network-current">--</span>
+            </div>
+            <div class="h-60 relative">
+                <canvas id="network-chart"></canvas>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Client Speeds Section -->
+    <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden p-6 space-y-4">
+        <h3 class="text-base font-bold text-slate-900 flex items-center gap-2">
+            <i class="fas fa-users text-indigo-600"></i>
+            Скорость подключенных клиентов
+        </h3>
+        <div id="clients-list" class="space-y-2">
+            <div class="p-8 text-center text-slate-400 text-xs">
+                <i class="fas fa-spinner fa-spin mr-1"></i> Загрузка данных клиентов...
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+const serverId = {{ server.id }};
+let charts = {};
+
+// Chart configurations
+const chartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+        legend: {
+            display: false
+        }
+    },
+    scales: {
+        x: {
+            display: true,
+            type: 'time',
+            time: {
+                unit: 'minute',
+                displayFormats: {
+                    minute: 'HH:mm'
+                }
+            }
+        },
+        y: {
+            beginAtZero: true
+        }
+    }
+};
+
+// Initialize charts
+function initCharts() {
+    // CPU Chart
+    charts.cpu = new Chart(document.getElementById('cpu-chart'), {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'CPU %',
+                data: [],
+                borderColor: '#dc3545',
+                backgroundColor: 'rgba(220, 53, 69, 0.1)',
+                tension: 0.4,
+                fill: true
+            }]
+        },
+        options: {
+            ...chartOptions,
+            scales: {
+                ...chartOptions.scales,
+                y: {
+                    beginAtZero: true,
+                    max: 100
+                }
+            }
+        }
+    });
+    
+    // RAM Chart
+    charts.ram = new Chart(document.getElementById('ram-chart'), {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'RAM MB',
+                data: [],
+                borderColor: '#ffc107',
+                backgroundColor: 'rgba(255, 193, 7, 0.1)',
+                tension: 0.4,
+                fill: true
+            }]
+        },
+        options: chartOptions
+    });
+    
+    // Disk Chart
+    charts.disk = new Chart(document.getElementById('disk-chart'), {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'Disk GB',
+                data: [],
+                borderColor: '#17a2b8',
+                backgroundColor: 'rgba(23, 162, 184, 0.1)',
+                tension: 0.4,
+                fill: true
+            }]
+        },
+        options: chartOptions
+    });
+    
+    // Network Chart
+    charts.network = new Chart(document.getElementById('network-chart'), {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [
+                {
+                    label: 'RX Mbps',
+                    data: [],
+                    borderColor: '#007bff',
+                    backgroundColor: 'rgba(0, 123, 255, 0.1)',
+                    tension: 0.4,
+                    fill: true
+                },
+                {
+                    label: 'TX Mbps',
+                    data: [],
+                    borderColor: '#28a745',
+                    backgroundColor: 'rgba(40, 167, 69, 0.1)',
+                    tension: 0.4,
+                    fill: true
+                }
+            ]
+        },
+        options: {
+            ...chartOptions,
+            plugins: {
+                legend: {
+                    display: true
+                }
+            }
+        }
+    });
+}
+
+// Update server metrics
+async function updateServerMetrics() {
+    try {
+        const response = await fetch(`/api/servers/${serverId}/metrics?hours=1`, {
+            headers: {
+                'Authorization': 'Bearer ' + localStorage.getItem('auth_token')
+            }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success && data.metrics.length > 0) {
+            const metrics = data.metrics;
+            const latest = metrics[metrics.length - 1];
+            
+            // Update current values
+            document.getElementById('cpu-current').textContent = `${latest.cpu_percent}%`;
+            document.getElementById('ram-current').textContent = 
+                `${latest.ram_used_mb} / ${latest.ram_total_mb} MB (${Math.round(latest.ram_used_mb / latest.ram_total_mb * 100)}%)`;
+            document.getElementById('disk-current').textContent = 
+                `${latest.disk_used_gb} / ${latest.disk_total_gb} GB (${Math.round(latest.disk_used_gb / latest.disk_total_gb * 100)}%)`;
+            document.getElementById('network-current').textContent = 
+                `↓ ${latest.network_rx_mbps} Mbps ↑ ${latest.network_tx_mbps} Mbps`;
+            
+            // Update charts
+            const timestamps = metrics.map(m => new Date(m.collected_at));
+            
+            charts.cpu.data.labels = timestamps;
+            charts.cpu.data.datasets[0].data = metrics.map(m => parseFloat(m.cpu_percent));
+            charts.cpu.update('none');
+            
+            charts.ram.data.labels = timestamps;
+            charts.ram.data.datasets[0].data = metrics.map(m => parseInt(m.ram_used_mb));
+            charts.ram.update('none');
+            
+            charts.disk.data.labels = timestamps;
+            charts.disk.data.datasets[0].data = metrics.map(m => parseFloat(m.disk_used_gb));
+            charts.disk.update('none');
+            
+            charts.network.data.labels = timestamps;
+            charts.network.data.datasets[0].data = metrics.map(m => parseFloat(m.network_rx_mbps));
+            charts.network.data.datasets[1].data = metrics.map(m => parseFloat(m.network_tx_mbps));
+            charts.network.update('none');
+        }
+    } catch (error) {
+        console.error('Failed to fetch server metrics:', error);
+    }
+}
+
+// Update client speeds
+async function updateClientSpeeds() {
+    try {
+        const clientIds = {{ clients|map(c => c.id)|json_encode|raw }};
+        
+        if (clientIds.length === 0) {
+            document.getElementById('clients-list').innerHTML = 
+                '<div class="no-data">No active clients</div>';
+            return;
+        }
+        
+        const clientsData = [];
+        
+        for (const clientId of clientIds) {
+            try {
+                const response = await fetch(`/api/clients/${clientId}/metrics?hours=1`, {
+                    headers: {
+                        'Authorization': 'Bearer ' + localStorage.getItem('auth_token')
+                    }
+                });
+                
+                const data = await response.json();
+                
+                if (data.success && data.metrics.length > 0) {
+                    const latest = data.metrics[data.metrics.length - 1];
+                    const client = {{ clients|json_encode|raw }}.find(c => c.id === clientId);
+                    
+                    clientsData.push({
+                        name: client.name,
+                        speedUp: parseFloat(latest.speed_up_kbps),
+                        speedDown: parseFloat(latest.speed_down_kbps)
+                    });
+                }
+            } catch (error) {
+                console.error(`Failed to fetch client ${clientId} metrics:`, error);
+            }
+        }
+        
+        // Sort by total speed
+        clientsData.sort((a, b) => (b.speedUp + b.speedDown) - (a.speedUp + a.speedDown));
+        
+        // Render clients list
+        const html = clientsData.map(c => `
+            <div class="client-speed-item">
+                <span class="client-name">${c.name}</span>
+                <div class="client-speeds">
+                    <span class="speed-up">↑ ${c.speedUp.toFixed(2)} Kbps</span>
+                    <span class="speed-down">↓ ${c.speedDown.toFixed(2)} Kbps</span>
+                </div>
+            </div>
+        `).join('');
+        
+        document.getElementById('clients-list').innerHTML = html || 
+            '<div class="no-data">No active traffic</div>';
+            
+    } catch (error) {
+        console.error('Failed to update client speeds:', error);
+    }
+}
+
+// Initialize
+initCharts();
+updateServerMetrics();
+updateClientSpeeds();
+
+// Auto-refresh every 30 seconds
+setInterval(() => {
+    updateServerMetrics();
+    updateClientSpeeds();
+}, 30000);
+</script>
+{% endblock %}

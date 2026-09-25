@@ -1,0 +1,182 @@
+{% extends "layout.twig" %}
+{% block title %}QR Декодер — {{ app_name }}{% endblock %}
+{% block content %}
+<div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
+  <div class="flex items-center gap-3 pb-2 border-b border-slate-200">
+    <a href="/settings" class="w-10 h-10 rounded-xl bg-white border border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-50 flex items-center justify-center transition shadow-sm">
+      <i class="fas fa-arrow-left"></i>
+    </a>
+    <div>
+      <h1 class="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight flex items-center gap-2.5">
+        <i class="fas fa-qrcode text-indigo-600"></i>
+        QR Декодер
+      </h1>
+      <p class="text-xs sm:text-sm text-slate-500">Инструмент для расшифровки и проверки конфигураций Amnezia и VLESS</p>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+    <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6 space-y-4">
+      <h3 class="text-base font-bold text-slate-900 flex items-center gap-2 pb-2 border-b border-slate-100">
+        <i class="fas fa-image text-indigo-600"></i>
+        Загрузить изображение
+      </h3>
+      <input id="fileInput" type="file" accept="image/*" class="block w-full px-3.5 py-2 bg-slate-50 border border-slate-300 rounded-xl text-slate-700 text-xs file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer">
+      <canvas id="canvas" style="display:none"></canvas>
+      <div id="imagePreview" class="max-h-48 overflow-hidden rounded-xl border border-slate-100 flex items-center justify-center bg-slate-50"></div>
+      <button id="decodeBtn" class="w-full inline-flex justify-center items-center py-2.5 px-4 rounded-xl shadow-lg shadow-indigo-500/20 text-xs font-semibold text-white brand-gradient hover:opacity-95 transition" onclick="decodeClick()">
+        <i class="fas fa-search mr-2"></i>Распознать QR-код
+      </button>
+    </div>
+
+    <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6 space-y-4">
+      <h3 class="text-base font-bold text-slate-900 flex items-center gap-2 pb-2 border-b border-slate-100">
+        <i class="fas fa-paste text-indigo-600"></i>
+        Вставить строку (Payload)
+      </h3>
+      <textarea id="payloadInput" class="block w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl font-mono text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition" rows="5" placeholder="vpn://... или vless://... или base64url"></textarea>
+      <button id="parseBtn" class="w-full inline-flex justify-center items-center py-2.5 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold shadow-sm transition">
+        <i class="fas fa-code mr-2"></i>Разобрать данные
+      </button>
+    </div>
+  </div>
+
+  <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6 space-y-3">
+    <h3 class="text-base font-bold text-slate-900 flex items-center gap-2 pb-2 border-b border-slate-100">
+      <i class="fas fa-terminal text-indigo-600"></i>
+      Результат расшифровки
+    </h3>
+    <pre id="result" class="bg-slate-950 text-emerald-400 p-4 rounded-xl text-xs font-mono border border-slate-900 overflow-x-auto min-h-[120px] leading-relaxed whitespace-pre-wrap select-all">// Результаты анализа появятся здесь...</pre>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
+<script src="https://unpkg.com/@zxing/library@0.18.6/umd/index.min.js"></script>
+<script>
+const fileInput = document.getElementById('fileInput');
+const decodeBtn = document.getElementById('decodeBtn');
+const canvas = document.getElementById('canvas');
+const preview = document.getElementById('imagePreview');
+const result = document.getElementById('result');
+const payloadInput = document.getElementById('payloadInput');
+const parseBtn = document.getElementById('parseBtn');
+
+fileInput.addEventListener('change', () => {
+  const f = fileInput.files[0];
+  if (!f) return;
+  const url = URL.createObjectURL(f);
+  const img = new Image();
+  img.onload = () => {
+    preview.innerHTML = '';
+    preview.appendChild(img);
+  };
+  img.src = url;
+});
+
+function b64urlToUint8(b64url) {
+  let s = b64url.replace(/-/g,'+').replace(/_/g,'/');
+  while (s.length % 4) s += '=';
+  const bin = atob(s);
+  const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  return arr;
+}
+
+function readBE32(arr, off) {
+  return (arr[off]<<24) | (arr[off+1]<<16) | (arr[off+2]<<8) | (arr[off+3]);
+}
+
+function parseAwgPayload(b64url) {
+  const bytes = b64urlToUint8(b64url);
+  if (bytes.length < 12) throw new Error('short payload');
+  const version = readBE32(bytes,0) >>> 0;
+  const compLen = readBE32(bytes,4) >>> 0;
+  const uncompLen = readBE32(bytes,8) >>> 0;
+  const data = bytes.slice(12);
+  const json = pako.inflate(data, {to:'string'});
+  const obj = JSON.parse(json);
+  return {version, compLen, uncompLen, json, obj};
+}
+
+function parseVless(uri) {
+  const u = new URL(uri);
+  const out = {
+    scheme: u.protocol.replace(':',''),
+    host: u.hostname,
+    port: u.port,
+    user: decodeURIComponent(u.username),
+    params: {}
+  };
+  const qs = u.searchParams;
+  qs.forEach((v,k)=>{ out.params[k]=v; });
+  return out;
+}
+
+function show(obj) {
+  result.textContent = typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2);
+}
+
+async function decodeClick() {
+  const f = fileInput.files[0];
+  if (!f) { alert('Choose image'); return; }
+  let img = preview.querySelector('img');
+  if (!img || !img.complete) {
+    const url = URL.createObjectURL(f);
+    img = new Image();
+    await new Promise((resolve, reject) => {
+      img.onload = resolve;
+      img.onerror = reject;
+      img.src = url;
+    });
+    preview.innerHTML = '';
+    preview.appendChild(img);
+  }
+  const w = img.naturalWidth || img.width;
+  const h = img.naturalHeight || img.height;
+  if (!w || !h) { show('Image has zero size'); return; }
+  const scale = Math.min(1, 1200 / Math.max(w, h));
+  canvas.width = Math.max(1, Math.floor(w * scale));
+  canvas.height = Math.max(1, Math.floor(h * scale));
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  const imageData = ctx.getImageData(0,0,canvas.width,canvas.height);
+  let text = '';
+  try {
+    const code = jsQR(imageData.data, imageData.width, imageData.height);
+    text = (code && code.data) ? code.data : '';
+  } catch (e) { text = ''; }
+  if (!text && window.ZXing && ZXing.BrowserQRCodeReader) {
+    try {
+      const reader = new ZXing.BrowserQRCodeReader();
+      const res = await reader.decodeFromImage(img);
+      text = res && res.text ? res.text : '';
+    } catch (e) { /* ignore */ }
+  }
+  if (!text) { show('No QR found'); return; }
+  payloadInput.value = text;
+  try {
+    if (text.startsWith('vless://')) {
+      show(parseVless(text));
+    } else {
+      show(parseAwgPayload(text));
+    }
+  } catch (e) { show('Parse error: ' + e.message); }
+}
+
+decodeBtn.addEventListener('click', decodeClick);
+
+parseBtn.addEventListener('click', () => {
+  const text = payloadInput.value.trim();
+  if (!text) { show('Empty'); return; }
+  try {
+    if (text.startsWith('vless://')) {
+      show(parseVless(text));
+    } else {
+      show(parseAwgPayload(text));
+    }
+  } catch (e) { show('Parse error: ' + e.message); }
+});
+</script>
+{% endblock %}

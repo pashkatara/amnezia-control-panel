@@ -1,0 +1,183 @@
+{% extends "layout.twig" %}
+
+{% block title %}{{ t('dashboard.title') }} — {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8">
+    <!-- Header -->
+    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div>
+            <h1 class="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight flex items-center gap-3">
+                <span class="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-100 flex items-center justify-center text-lg shadow-sm">
+                    <i class="fas fa-tachometer-alt"></i>
+                </span>
+                {{ t('dashboard.title') }}
+            </h1>
+            <p class="mt-1 text-sm text-slate-500">{{ t('dashboard.welcome') }}</p>
+        </div>
+        <div class="flex items-center gap-3">
+            <a href="/servers/create" class="inline-flex items-center justify-center px-4 py-2.5 rounded-xl shadow-lg shadow-indigo-500/20 text-sm font-semibold text-white brand-gradient hover:opacity-95 transition duration-150">
+                <i class="fas fa-plus mr-2"></i>
+                {{ t('servers.add') }}
+            </a>
+        </div>
+    </div>
+
+    <!-- Stats Grid -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+        <!-- Servers Card -->
+        <div class="bg-white rounded-2xl border border-slate-200/80 p-6 shadow-sm hover:shadow-md transition-all duration-200">
+            <div class="flex items-center justify-between">
+                <div class="space-y-1">
+                    <p class="text-xs font-semibold uppercase tracking-wider text-slate-400">{{ t('dashboard.total_servers') }}</p>
+                    <p class="text-3xl font-extrabold text-slate-900">{{ servers|length }}</p>
+                </div>
+                <div class="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 border border-indigo-100 flex items-center justify-center text-xl shadow-inner">
+                    <i class="fas fa-server"></i>
+                </div>
+            </div>
+            <div class="mt-4 pt-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+                <span>Подключенные ноды</span>
+                <a href="/servers" class="text-indigo-600 font-semibold hover:text-indigo-700 inline-flex items-center">
+                    Список <i class="fas fa-arrow-right ml-1 text-[10px]"></i>
+                </a>
+            </div>
+        </div>
+
+        <!-- Total Clients Card -->
+        <div class="bg-white rounded-2xl border border-slate-200/80 p-6 shadow-sm hover:shadow-md transition-all duration-200">
+            <div class="flex items-center justify-between">
+                <div class="space-y-1">
+                    <p class="text-xs font-semibold uppercase tracking-wider text-slate-400">{{ t('dashboard.total_clients') }}</p>
+                    <p class="text-3xl font-extrabold text-slate-900">{{ clients|length }}</p>
+                </div>
+                <div class="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 border border-emerald-100 flex items-center justify-center text-xl shadow-inner">
+                    <i class="fas fa-users"></i>
+                </div>
+            </div>
+            <div class="mt-4 pt-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+                <span>Все созданные клиенты</span>
+                <span class="font-medium text-emerald-600 flex items-center gap-1">
+                    <i class="fas fa-check-circle"></i> Готовы к работе
+                </span>
+            </div>
+        </div>
+
+        <!-- Online Now Card -->
+        <div class="bg-white rounded-2xl border border-slate-200/80 p-6 shadow-sm hover:shadow-md transition-all duration-200">
+            <div class="flex items-center justify-between">
+                <div class="space-y-1">
+                    <p class="text-xs font-semibold uppercase tracking-wider text-slate-400">{{ t('dashboard.online_now') }}</p>
+                    <div class="flex items-baseline gap-2.5">
+                        <p class="text-3xl font-extrabold text-slate-900">{{ online_count|default(0) }}</p>
+                        {% if (online_count|default(0)) > 0 %}
+                        <span class="flex h-2.5 w-2.5 relative" title="Есть активные подключения">
+                            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                            <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                        </span>
+                        {% else %}
+                        <span class="inline-flex rounded-full h-2.5 w-2.5 bg-slate-300" title="Нет активных подключений"></span>
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="w-12 h-12 rounded-2xl {% if (online_count|default(0)) > 0 %}bg-emerald-50 text-emerald-600 border-emerald-100{% else %}bg-slate-50 text-slate-400 border-slate-100{% endif %} border flex items-center justify-center text-xl shadow-inner transition-colors">
+                    <i class="fas fa-wifi"></i>
+                </div>
+            </div>
+            <div class="mt-4 pt-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+                <span>Активные сессии VPN</span>
+                {% if (online_count|default(0)) > 0 %}
+                <span class="font-medium text-emerald-600 flex items-center gap-1">
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> В реальном времени
+                </span>
+                {% else %}
+                <span class="text-slate-400">Нет активных</span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent Servers Section -->
+    {% if servers|length > 0 %}
+    <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
+        <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+            <div class="flex items-center gap-2.5">
+                <i class="fas fa-server text-indigo-600 text-sm"></i>
+                <h2 class="text-base font-bold text-slate-900">{{ t('dashboard.recent_servers') }}</h2>
+            </div>
+            <a href="/servers" class="text-xs font-semibold text-indigo-600 hover:text-indigo-700">
+                Все серверы ({{ servers|length }}) &rarr;
+            </a>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-slate-100">
+                <thead>
+                    <tr class="bg-slate-50/70 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                        <th class="px-6 py-3.5">{{ t('servers.name') }}</th>
+                        <th class="px-6 py-3.5">{{ t('servers.host') }}</th>
+                        <th class="px-6 py-3.5">{{ t('servers.status') }}</th>
+                        <th class="px-6 py-3.5 text-right">{{ t('servers.actions') }}</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100 bg-white">
+                    {% for server in servers|slice(0, 5) %}
+                    <tr class="hover:bg-slate-50/80 transition-colors">
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            <div class="flex items-center">
+                                <div class="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold text-xs mr-3">
+                                    <i class="fas fa-hdd"></i>
+                                </div>
+                                <div>
+                                    <a href="/servers/{{ server.id }}" class="text-sm font-semibold text-slate-900 hover:text-indigo-600 transition">
+                                        {{ server.name }}
+                                    </a>
+                                </div>
+                            </div>
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm font-mono text-slate-600">
+                            {{ server.host }}
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            {% if server.status == 'active' %}
+                            <span class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                                {{ t('status.active') }}
+                            </span>
+                            {% elseif server.status == 'deploying' %}
+                            <span class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-full bg-amber-50 text-amber-700 border border-amber-200">
+                                <i class="fas fa-spinner fa-spin text-[10px]"></i>
+                                {{ t('status.deploying') }}
+                            </span>
+                            {% else %}
+                            <span class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-full bg-rose-50 text-rose-700 border border-rose-200">
+                                <span class="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
+                                {{ server.status|capitalize }}
+                            </span>
+                            {% endif %}
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm">
+                            <a href="/servers/{{ server.id }}" class="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 hover:text-indigo-700 transition">
+                                <i class="fas fa-eye mr-1.5"></i> {{ t('servers.view') }}
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% else %}
+    <div class="bg-white rounded-2xl border border-slate-200/80 p-12 text-center shadow-sm max-w-xl mx-auto">
+        <div class="w-16 h-16 rounded-2xl bg-indigo-50 text-indigo-500 border border-indigo-100 flex items-center justify-center text-3xl mx-auto mb-4">
+            <i class="fas fa-server"></i>
+        </div>
+        <h3 class="text-lg font-bold text-slate-900 mb-1">{{ t('dashboard.no_servers') }}</h3>
+        <p class="text-sm text-slate-500 mb-6">{{ t('dashboard.get_started') }}</p>
+        <a href="/servers/create" class="inline-flex items-center justify-center px-5 py-2.5 rounded-xl shadow-lg shadow-indigo-500/20 text-sm font-semibold text-white brand-gradient hover:opacity-95 transition">
+            <i class="fas fa-plus mr-2"></i>
+            {{ t('dashboard.add_first_server') }}
+        </a>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

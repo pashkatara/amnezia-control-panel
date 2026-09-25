@@ -1,0 +1,416 @@
+{% extends "layout.twig" %}
+
+{% block title %}{{ t('menu.settings') }} — {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
+    <div class="pb-2 border-b border-slate-200">
+        <h1 class="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight flex items-center gap-2.5">
+            <span class="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-100 flex items-center justify-center text-lg shadow-sm">
+                <i class="fas fa-cog"></i>
+            </span>
+            {{ t('menu.settings') }}
+        </h1>
+        <p class="mt-1 text-sm text-slate-500">{{ t('settings.description') }}</p>
+    </div>
+
+    {% if success %}
+    <div class="bg-emerald-50 border border-emerald-200 text-emerald-800 px-4 py-3.5 rounded-xl text-sm flex items-center gap-3 shadow-sm">
+        <i class="fas fa-check-circle text-emerald-500 text-base"></i>
+        <p>{{ success }}</p>
+    </div>
+    {% endif %}
+
+    {% if error %}
+    <div class="bg-rose-50 border border-rose-200 text-rose-800 px-4 py-3.5 rounded-xl text-sm flex items-center gap-3 shadow-sm">
+        <i class="fas fa-exclamation-circle text-rose-500 text-base"></i>
+        <p>{{ error }}</p>
+    </div>
+    {% endif %}
+
+    <!-- Tabs Navigation (Segmented Bar) -->
+    <div class="overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden py-1">
+        <nav class="inline-flex items-center gap-1.5 p-1.5 bg-slate-100 border border-slate-200/80 rounded-2xl text-xs sm:text-sm font-medium">
+            <a href="#" onclick="showTab('profile'); return false;" id="tab-profile" 
+               class="tab-link bg-white text-indigo-700 shadow-sm font-semibold px-4 py-2 rounded-xl flex items-center gap-2 whitespace-nowrap transition-all duration-150">
+                <i class="fas fa-user-circle"></i>{{ t('settings.profile') }}
+            </a>
+            <a href="#" onclick="showTab('api'); return false;" id="tab-api"
+               class="tab-link text-slate-600 hover:text-slate-900 hover:bg-white/60 px-4 py-2 rounded-xl flex items-center gap-2 whitespace-nowrap transition-all duration-150">
+                <i class="fas fa-key"></i>{{ t('settings.api_keys') }}
+            </a>
+            <a href="/tools/qr-decode"
+               class="tab-link text-slate-600 hover:text-slate-900 hover:bg-white/60 px-4 py-2 rounded-xl flex items-center gap-2 whitespace-nowrap transition-all duration-150">
+                <i class="fas fa-qrcode"></i>QR Декодер
+            </a>
+            {% if user.role == 'admin' %}
+            <a href="#" onclick="showTab('users'); return false;" id="tab-users"
+               class="tab-link text-slate-600 hover:text-slate-900 hover:bg-white/60 px-4 py-2 rounded-xl flex items-center gap-2 whitespace-nowrap transition-all duration-150">
+                <i class="fas fa-users"></i>{{ t('settings.users') }}
+            </a>
+            <a href="#" onclick="showTab('ldap'); return false;" id="tab-ldap"
+               class="tab-link text-slate-600 hover:text-slate-900 hover:bg-white/60 px-4 py-2 rounded-xl flex items-center gap-2 whitespace-nowrap transition-all duration-150">
+                <i class="fas fa-network-wired"></i>LDAP
+            </a>
+            <a href="#" onclick="showTab('protocols'); return false;" id="tab-protocols"
+               class="tab-link text-slate-600 hover:text-slate-900 hover:bg-white/60 px-4 py-2 rounded-xl flex items-center gap-2 whitespace-nowrap transition-all duration-150">
+                <i class="fas fa-cubes"></i>{{ t('settings.protocol_management') }}
+            </a>
+            <a href="/admin/logs"
+               class="tab-link text-slate-600 hover:text-slate-900 hover:bg-white/60 px-4 py-2 rounded-xl flex items-center gap-2 whitespace-nowrap transition-all duration-150">
+                <i class="fas fa-file-alt"></i>Логи
+            </a>
+            {% endif %}
+        </nav>
+    </div>
+
+    <!-- Profile Tab -->
+    <div id="content-profile" class="tab-content space-y-6">
+        <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6 max-w-2xl space-y-4">
+            <h2 class="text-base font-bold text-slate-900 flex items-center gap-2 pb-3 border-b border-slate-100">
+                <i class="fas fa-user-edit text-indigo-600"></i>Личные данные
+            </h2>
+            <form method="POST" action="/settings/profile" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1.5">Отображаемое имя</label>
+                    <input type="text" name="display_name" value="{{ user.display_name|default(user.name) }}"
+                           class="block w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition">
+                </div>
+                <div class="pt-1">
+                    <button type="submit" class="inline-flex items-center px-5 py-2.5 rounded-xl shadow-lg shadow-indigo-500/20 text-xs font-semibold text-white brand-gradient hover:opacity-95 transition">
+                        <i class="fas fa-save mr-2"></i>{{ t('form.save') }}
+                    </button>
+                </div>
+            </form>
+        </div>
+
+        <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6 max-w-2xl space-y-4">
+            <h2 class="text-base font-bold text-slate-900 flex items-center gap-2 pb-3 border-b border-slate-100">
+                <i class="fas fa-lock text-indigo-600"></i>{{ t('settings.change_password') }}
+            </h2>
+            <form method="POST" action="/settings/change-password" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1.5">{{ t('settings.current_password') }}</label>
+                    <input type="password" name="current_password" required
+                           class="block w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition">
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">{{ t('settings.new_password') }}</label>
+                        <input type="password" name="new_password" required minlength="6"
+                               class="block w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition">
+                        <p class="mt-1 text-[11px] text-slate-400">{{ t('settings.min_6_chars') }}</p>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">{{ t('settings.confirm_password') }}</label>
+                        <input type="password" name="confirm_password" required minlength="6"
+                               class="block w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition">
+                    </div>
+                </div>
+                <div class="pt-1">
+                    <button type="submit" class="inline-flex items-center px-5 py-2.5 rounded-xl shadow-lg shadow-indigo-500/20 text-xs font-semibold text-white brand-gradient hover:opacity-95 transition">
+                        <i class="fas fa-key mr-2"></i>{{ t('settings.change_password') }}
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- API Tab -->
+    <div id="content-api" class="tab-content hidden">
+        <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6 max-w-2xl space-y-4">
+            <h2 class="text-base font-bold text-slate-900 flex items-center gap-2 pb-3 border-b border-slate-100">
+                <i class="fas fa-key text-indigo-600"></i>{{ t('settings.api_keys') }}
+            </h2>
+            {% if openrouter_key %}
+            <div class="p-4 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <i class="fas fa-check-circle text-emerald-600 text-sm"></i>
+                    <span class="text-xs font-semibold text-emerald-900">{{ t('settings.api_key_configured') }}</span>
+                </div>
+                <code class="text-xs text-emerald-800 bg-emerald-100/80 px-2.5 py-1 rounded-lg font-mono">
+                    {{ openrouter_key[:15] }}...{{ openrouter_key[-4:] }}
+                </code>
+            </div>
+            {% else %}
+            <div class="p-4 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2 text-amber-800 text-xs font-medium">
+                <i class="fas fa-exclamation-triangle text-amber-600"></i>
+                <span>{{ t('settings.no_api_key') }}</span>
+            </div>
+            {% endif %}
+            
+            <form method="POST" action="/settings/api-key" class="space-y-4 pt-2">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                        OpenRouter API Key
+                    </label>
+                    <input type="text" name="api_key" placeholder="sk-or-v1-..." value="{{ openrouter_key }}" 
+                           class="block w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl font-mono text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition">
+                    <p class="mt-1.5 text-xs text-slate-500">
+                        <i class="fas fa-info-circle text-indigo-500"></i> {{ t('settings.get_key_at') }} 
+                        <a href="https://openrouter.ai/keys" target="_blank" class="text-indigo-600 font-semibold hover:underline">openrouter.ai/keys</a>
+                    </p>
+                </div>
+                <div>
+                    <label class="inline-flex items-center cursor-pointer">
+                        <input type="checkbox" name="skip_test" value="1" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500">
+                        <span class="ml-2 text-xs text-slate-600">{{ t('settings.skip_validation') }}</span>
+                    </label>
+                </div>
+                <input type="hidden" name="service" value="openrouter">
+                <button type="submit" class="inline-flex items-center px-5 py-2.5 rounded-xl shadow-lg shadow-indigo-500/20 text-xs font-semibold text-white brand-gradient hover:opacity-95 transition">
+                    <i class="fas fa-save mr-2"></i>{{ openrouter_key ? t('form.update') : t('form.save') }}
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Users Tab -->
+    {% if user.role == 'admin' %}
+    <div id="content-users" class="tab-content hidden space-y-6">
+        <!-- Add user form -->
+        <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6 space-y-4">
+            <h2 class="text-base font-bold text-slate-900 flex items-center gap-2 pb-3 border-b border-slate-100">
+                <i class="fas fa-user-plus text-indigo-600"></i>{{ t('users.add_user') }}
+            </h2>
+            <form method="POST" action="/settings/add-user">
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">{{ t('auth.name') }}</label>
+                        <input type="text" name="name" required class="block w-full px-3.5 py-2 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition" placeholder="Имя">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">{{ t('auth.email') }}</label>
+                        <input type="email" name="email" required class="block w-full px-3.5 py-2 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition" placeholder="user@example.com">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">{{ t('auth.password') }}</label>
+                        <input type="password" name="password" required minlength="6" class="block w-full px-3.5 py-2 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition" placeholder="••••••••">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">{{ t('users.role') }}</label>
+                        <select name="role" class="block w-full px-3.5 py-2 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition">
+                            <option value="user">{{ t('users.role_user') }}</option>
+                            <option value="admin">{{ t('users.role_admin') }}</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="mt-4 flex justify-end">
+                    <button type="submit" class="inline-flex items-center px-5 py-2 rounded-xl shadow-lg shadow-indigo-500/20 text-xs font-semibold text-white brand-gradient hover:opacity-95 transition">
+                        <i class="fas fa-plus mr-1.5"></i>{{ t('users.add_user') }}
+                    </button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Users Table -->
+        <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
+            <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                <h2 class="text-base font-bold text-slate-900 flex items-center gap-2">
+                    <i class="fas fa-users text-indigo-600"></i>{{ t('users.all_users') }}
+                </h2>
+                <span class="text-xs text-slate-500">Всего: {{ users|length }}</span>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-slate-100">
+                    <thead class="bg-slate-50/70">
+                        <tr class="text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                            <th class="px-6 py-3.5">{{ t('auth.name') }}</th>
+                            <th class="px-6 py-3.5">{{ t('auth.email') }}</th>
+                            <th class="px-6 py-3.5">{{ t('users.role') }}</th>
+                            <th class="px-6 py-3.5">{{ t('users.created') }}</th>
+                            <th class="px-6 py-3.5 text-right">{{ t('settings.actions') }}</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-100 bg-white">
+                        {% for u in users %}
+                        <tr class="hover:bg-slate-50/80 transition-colors">
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <div class="flex items-center">
+                                    <div class="w-8 h-8 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center text-xs font-bold mr-3">
+                                        <i class="fas fa-user"></i>
+                                    </div>
+                                    <span class="text-sm font-semibold text-slate-900">{{ u.name }}</span>
+                                </div>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-600 font-mono">{{ u.email }}</td>
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                {% if u.role == 'admin' %}
+                                <span class="px-2.5 py-0.5 text-xs font-semibold rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">{{ t('users.role_admin') }}</span>
+                                {% else %}
+                                <span class="px-2.5 py-0.5 text-xs font-semibold rounded-full bg-slate-100 text-slate-700">{{ t('users.role_user') }}</span>
+                                {% endif %}
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-xs text-slate-500">{{ u.created_at|date('Y-m-d') }}</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-right text-xs">
+                                {% if u.id != user.id %}
+                                <form method="POST" action="/settings/delete-user/{{ u.id }}" class="inline" onsubmit="return confirm('{{ t('users.delete_confirm', [u.name]) }}')">
+                                    <button type="submit" class="text-rose-600 hover:text-rose-800 font-semibold px-2 py-1 rounded hover:bg-rose-50 transition">
+                                        <i class="fas fa-trash mr-1"></i> {{ t('clients.delete') }}
+                                    </button>
+                                </form>
+                                {% else %}
+                                <a href="#" onclick="showTab('profile'); return false;" class="text-indigo-600 hover:text-indigo-800 font-semibold px-2 py-1 rounded hover:bg-indigo-50 transition">
+                                    <i class="fas fa-key mr-1"></i> {{ t('settings.change_password') }}
+                                </a>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- LDAP Tab -->
+    <div id="content-ldap" class="tab-content hidden space-y-6">
+        <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6 max-w-5xl space-y-6">
+            <div class="flex items-center justify-between pb-3 border-b border-slate-100">
+                <h2 class="text-base font-bold text-slate-900 flex items-center gap-2">
+                    <i class="fas fa-network-wired text-indigo-600"></i>
+                    {{ t('ldap.settings')|default('Настройки LDAP') }}
+                </h2>
+                <button id="testConnection" class="inline-flex items-center px-4 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-semibold border border-indigo-200 transition">
+                    <i class="fas fa-plug mr-1.5"></i>
+                    {{ t('ldap.test_connection')|default('Проверить соединение') }}
+                </button>
+            </div>
+
+            <form id="ldapForm" method="POST" action="/settings/ldap/save" class="space-y-5">
+                <div class="p-4 bg-slate-50 border border-slate-200 rounded-xl">
+                    <label class="flex items-center cursor-pointer">
+                        <input type="checkbox" name="enabled" value="1" 
+                               {% if config.enabled %}checked{% endif %}
+                               class="w-4 h-4 text-indigo-600 rounded focus:ring-2 focus:ring-indigo-500">
+                        <span class="ml-3 text-sm font-semibold text-slate-900">{{ t('ldap.enable_ldap_auth')|default('Включить аутентификацию через LDAP') }}</span>
+                    </label>
+                    <p class="mt-1 ml-7 text-xs text-slate-500">{{ t('ldap.enable_description')|default('Позволяет пользователям входить с корпоративными учетными записями') }}</p>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1">
+                            {{ t('ldap.host')|default('Хост сервера') }} <span class="text-rose-500">*</span>
+                        </label>
+                        <input type="text" name="host" value="{{ config.host }}" required
+                               placeholder="ldap.example.com"
+                               class="block w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1">
+                            {{ t('ldap.port')|default('Порт') }}
+                        </label>
+                        <input type="number" name="port" value="{{ config.port }}" 
+                               placeholder="389"
+                               class="block w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition">
+                    </div>
+                </div>
+
+                <div>
+                    <label class="flex items-center cursor-pointer">
+                        <input type="checkbox" name="use_tls" value="1"
+                               {% if config.use_tls %}checked{% endif %}
+                               class="w-4 h-4 text-indigo-600 rounded focus:ring-2 focus:ring-indigo-500">
+                        <span class="ml-2 text-xs font-semibold text-slate-700">{{ t('ldap.use_tls')|default('Использовать TLS/SSL (LDAPS)') }}</span>
+                    </label>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1">
+                            {{ t('ldap.base_dn')|default('Базовый DN') }} <span class="text-rose-500">*</span>
+                        </label>
+                        <input type="text" name="base_dn" value="{{ config.base_dn }}" required
+                               placeholder="dc=example,dc=com"
+                               class="block w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition">
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1">
+                            {{ t('ldap.bind_dn')|default('DN для привязки (Bind DN)') }} <span class="text-rose-500">*</span>
+                        </label>
+                        <input type="text" name="bind_dn" value="{{ config.bind_dn }}" required
+                               placeholder="cn=admin,dc=example,dc=com"
+                               class="block w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition">
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">
+                        {{ t('ldap.bind_password')|default('Пароль для привязки') }} <span class="text-rose-500">*</span>
+                    </label>
+                    <input type="password" name="bind_password" value="{{ config.bind_password }}" required
+                           placeholder="••••••••"
+                           class="block w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition">
+                </div>
+
+                <div class="pt-3 flex gap-3">
+                    <button type="submit" class="inline-flex items-center px-6 py-2.5 rounded-xl shadow-lg shadow-indigo-500/20 text-xs font-semibold text-white brand-gradient hover:opacity-95 transition">
+                        <i class="fas fa-save mr-2"></i>{{ t('common.save')|default('Сохранить') }}
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Protocols Tab -->
+    <div id="content-protocols" class="tab-content hidden">
+        {% include 'settings/protocols_management.twig' %}
+    </div>
+    {% endif %}
+</div>
+
+<script>
+function showTab(tab) {
+    document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+    document.querySelectorAll('.tab-link').forEach(el => {
+        el.classList.remove('bg-white', 'text-indigo-700', 'shadow-sm', 'font-semibold');
+        el.classList.add('text-slate-600');
+    });
+    const target = document.getElementById('content-' + tab);
+    if (target) {
+        target.classList.remove('hidden');
+    }
+    const link = document.getElementById('tab-' + tab);
+    if (link) {
+        link.classList.remove('text-slate-600');
+        link.classList.add('bg-white', 'text-indigo-700', 'shadow-sm', 'font-semibold');
+    }
+    
+    window.location.hash = tab;
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    const hash = window.location.hash.substring(1);
+    if (hash && document.getElementById('tab-' + hash)) {
+        showTab(hash);
+    }
+});
+
+// LDAP test button
+document.addEventListener('click', function(e) {
+    if (e.target && (e.target.id === 'testConnection' || e.target.closest('#testConnection'))) {
+        const btn = document.getElementById('testConnection');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> Проверка...';
+        fetch('/settings/ldap/test', { method: 'POST' })
+            .then(r => r.json())
+            .then(result => {
+                if (result.success) {
+                    alert('✓ ' + result.message);
+                } else {
+                    alert('✗ ' + result.message);
+                }
+            })
+            .catch(err => {
+                alert('Ошибка проверки соединения: ' + err.message);
+            })
+            .finally(() => {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-plug mr-1.5"></i> Проверить соединение';
+            });
+    }
+});
+</script>
+{% endblock %}
